@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $.Release.Name }}-confs
+  annotations:
+    field.cattle.io/description: redis configurations
+data:
+  {{- $workloads := $.Values.redis.workloads | default 1 |int }}
+  {{- $start_port := $.Values.redis.port | default 6379 |int }}
+  {{- $servers := $.Values.redis.servers | default 1 | int }}
+  {{- $end_port := add $start_port $servers | int  }}
+
+  {{- range $i,$port := untilStep $start_port $end_port 1 }}
+  redis_{{ $port }}.conf: |-
+    port {{ $port}}
+    pidfile /var/run/redis_{{ $port}}.pid
+    dbfilename dump_{{ $port }}.rdb
+    appendfilename appendonly_{{ $port }}.aof
+    {{- if and $.Values.redis.volume $.Values.redis.volume.storage  }}
+    {{- if or $.Values.redis.save  (ne ($.Values.redis.appendonly | default "no")  "no") }}
+    dir /usr/local/redis/data
+    {{- else }}
+    dir /tmp
+    {{- end }}
+    appendonly {{ $.Values.redis.appendonly | default "no" }}
+    save {{ $.Values.redis.save | default "\"\"" }}
+    logfile /usr/local/redis/logs/redis_{{ $port }}.log
+    {{- else }}
+    logfile /tmp/redis_{{ $port }}.log
+    appendonly "no"
+    save ""
+    dir /tmp
+    {{- end }}
+    include /usr/local/redis/conf/redis.conf
+  {{- end}}
+  {{- $confName := "redis" }}
+  {{- range $i,$port := untilStep $start_port $end_port 1 }}
+  {{- range $i,$redisIndex := untilStep 1 (add $workloads 1 | int) 1 }}
+  {{- if le $workloads 1 }}
+  {{- $confName = "redis" }}
+  {{- else }}
+  {{- if le $workloads 9 }}
+  {{- $confName = print "redis" $redisIndex }}
+  {{- else if le $redisIndex 9 }}
+  {{- $confName = print  "redis0" $redisIndex }}
+  {{- else }}
+  {{- $confName = print "redis" $redisIndex }}
+  {{- end }}
+  {{- end }}
+  {{- if get $.Values.redis (print $confName "-" $port) }}
+  {{ $confName }}_{{- $port}}.conf: |-
+    port {{ $port}}
+    pidfile /var/run/redis_{{ $port}}.pid
+    dbfilename dump_{{ $port }}.rdb
+    appendfilename appendonly_{{ $port }}.aof
+    {{- if and $.Values.redis.volume $.Values.redis.volume.storage  }}
+    {{- if or $.Values.redis.save  (ne ($.Values.redis.appendonly | default "no")  "no") }}
+    dir /usr/local/redis/data
+    {{- else }}
+    dir /tmp
+    {{- end }}
+    appendonly {{ $.Values.redis.appendonly | default "no" }}
+    save {{ $.Values.redis.save | default "\"\"" }}
+    logfile /usr/local/redis/logs/redis_{{ $port }}.log
+    {{- else }}
+    logfile /tmp/redis_{{ $port }}.log
+    appendonly "no"
+    save ""
+    dir /tmp
+    {{- end }}
+    {{- range $key,$value := (get $.Values.redis (print $confName "-" $port)) }}
+    {{ $key }} {{ $value }}
+    {{- end }}
+    include /usr/local/redis/conf/redis.conf
+  {{- end}}
+  {{- end}}
+  {{- end}}
+binaryData:
+  redis.conf: >-
+{{ include "redis.redis.conf" . | b64enc | indent 4 }}  

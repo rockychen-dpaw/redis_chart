@@ -1,0 +1,122 @@
+{{- $workloads := $.Values.redis.workloads | default 1 |int }}
+{{- $redisName := $.Release.Name }}
+{{- range $i,$redisIndex := untilStep 1 (add $workloads 1 | int) 1 }}
+{{- if le $workloads 1 }}
+{{- $redisName = $.Release.Name }}
+{{- else }}
+---
+{{- if le $workloads 9 }}
+{{- $redisName = print $.Release.Name $redisIndex }}
+{{- else if le $redisIndex 9 }}
+{{- $redisName = print $.Release.Name "0" $redisIndex }}
+{{ else }}
+{{- $redisName = print $.Release.Name $redisIndex }}
+{{- end }}
+{{- end }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+spec:
+  selector:
+    matchLabels:
+      workload.user.cattle.io/workloadselector: apps.statefulset-{{ $.Release.Namespace}}-{{ $redisName }}
+  podManagementPolicy: OrderedReady
+  replicas: 1
+  revisionHistoryLimit: 10
+  serviceName: {{ $redisName }}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        workload.user.cattle.io/workloadselector: apps.statefulset-{{ $.Release.Namespace}}-{{ $redisName }}
+    spec:
+      containers:
+        - command:
+          - /usr/local/redis/bin/start_redis
+          image: {{ $.Values.redis.image }}
+          imagePullPolicy: Always
+          name: redis
+          resources: {}
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: false
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          tty: true
+          stdin: true
+          volumeMounts:
+          - mountPath: /usr/local/redis/bin
+            name: redis-scripts
+          - mountPath: /usr/local/redis/conf/redis.conf
+            name: redis-confs
+            subPath: redis.conf
+          {{- $start_port := $.Values.redis.port | default 6379 |int }}
+          {{- $servers := $.Values.redis.servers | default 1 | int }}
+          {{- $end_port := add $start_port $servers | int  }}
+          {{- $confName := "redis" }}
+          {{- range $i,$port := untilStep $start_port $end_port 1 }}
+          - mountPath: /usr/local/redis/conf/redis_{{ $port }}.conf
+            name: redis-confs
+            {{- if le $workloads 1 }}
+              {{- $confName = "redis" }}
+            {{- else }}
+              {{- if le $workloads 9 }}
+                {{- $confName = print "redis" $redisIndex }}
+              {{- else if le $redisIndex 9 }}
+                {{- $confName = print  "redis0" $redisIndex }}
+              {{- else }}
+                {{- $confName = print "redis" $redisIndex }}
+              {{- end }} 
+            {{- end }}
+            {{- if get $.Values.redis (print $redisName "-" $port) }}
+            subPath: {{ $confName }}_{{ $port}}.conf
+            {{- else }}
+            subPath: redis_{{ $port }}.conf
+            {{- end }}
+            {{- end }}
+            {{- if and $.Values.redis.volume $.Values.redis.volume.storage  }}
+            {{- if or $.Values.redis.save  (ne ($.Values.redis.appendonly | default "no")  "no") }}
+          - mountPath: /usr/local/redis/data
+            name: redis-data
+            {{- if le $workloads 1 }}
+            subPath: data
+            {{- else }}
+            subPath: {{ $redisName }}/data
+            {{- end }}
+          {{- end }}
+          - mountPath: /usr/local/redis/logs
+            name: redis-data
+            {{- if le $workloads 1 }}
+            subPath: logs
+            {{- else }}
+            subPath: {{$redisName}}/logs
+            {{- end }}
+          {{- end }}
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - configMap:
+          defaultMode: 365
+          name: {{ $.Release.Name }}-scripts
+        name: redis-scripts
+      - configMap:
+          defaultMode: 292
+          name: {{ $.Release.Name }}-confs
+        name: redis-confs
+      {{- if and $.Values.redis.volume $.Values.redis.volume.storage  }}
+      - name: redis-data
+        persistentVolumeClaim:
+          claimName: {{ $.Release.Name}}-data
+          type: persistentvolumeclaim
+      {{- end }}
+  updateStrategy:
+    rollingUpdate:
+      partition: 0
+    type: RollingUpdate
+{{- end}}

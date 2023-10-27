@@ -1,0 +1,14 @@
+{{- if and $.Values.redis.volume $.Values.redis.volume.storage  }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $.Release.Name}}-data
+spec:
+  accessModes:
+    - {{ $.Values.redis.volume.accessMode | default "ReadWriteOnce" }}
+  resources:
+    requests:
+      storage: {{ $.Values.redis.volume.storage}}
+  storageClassName: {{ $.Values.redis.volume.storageClassName | default "managed-csi-retain" }}
+  volumeMode: {{ $.Values.redis.volume.volumeMode | default "Filesystem" }}
+{{- end }}

@@ -1,0 +1,16 @@
+redis:
+  image: "redis:6.2"
+  workloads: 12
+  port: 6379
+  servers: 4
+  appendonly: "yes"
+  save: 3600 10000
+  redis01-6379:
+    a: 1
+    b: 2
+  redis05-6382:
+    x: 1
+    "y": 2
+  #volume:
+      #storage: 2Gi
+

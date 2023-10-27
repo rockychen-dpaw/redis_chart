@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $.Release.Name }}-scripts
+  annotations:
+    field.cattle.io/description: the scripts to manage redis
+binaryData:
+  start_redis: >- 
+{{ include "redis.start_redis" . | b64enc | indent 4 }}  
