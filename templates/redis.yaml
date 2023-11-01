@@ -1,42 +1,107 @@
-{{- $workloads := $.Values.redis.workloads | default 1 |int }}
-{{- $redisName := $.Release.Name }}
-{{- range $i,$redisIndex := untilStep 1 (add $workloads 1 | int) 1 }}
-{{- if le $workloads 1 }}
-{{- $redisName = $.Release.Name }}
-{{- else }}
+{{- $workloads := 0 }}
+{{- range $i,$workload := $.Values.redis.workloads }}
+    {{- $workloads = add $workloads 1}}
+{{- end }}
+{{- $redis_name := $.Release.Name }}
+{{- $redis_index := 0 }}
+{{- $node_index := 0 }}
+{{- $node := 0 }}
+{{- $ports := list }}
+{{- $port := 0 }}
+{{- $ports_len := 0 }}
+{{- range $i,$workload := $.Values.redis.workloads }}
+    {{- $redis_index = add $i 1 }}
+    {{- if le $workloads 1 }}
+        {{- $redis_name = $.Release.Name }}
+    {{- else }}
 ---
-{{- if le $workloads 9 }}
-{{- $redisName = print $.Release.Name $redisIndex }}
-{{- else if le $redisIndex 9 }}
-{{- $redisName = print $.Release.Name "0" $redisIndex }}
-{{ else }}
-{{- $redisName = print $.Release.Name $redisIndex }}
-{{- end }}
-{{- end }}
+        {{- if le $workloads 9 }}
+            {{- $redis_name = print $.Release.Name $redis_index }}
+        {{- else if le $redis_index 9 }}
+            {{- $redis_name = print $.Release.Name "0" $redis_index }}
+        {{ else }}
+            {{- $redis_name = print $.Release.Name $redis_index }}
+        {{- end }}
+    {{- end }}
+    {{- $redis_conf := get $.Values.redis "redis.conf" }}
+    {{- $cluster_enabled :=  false }}
+    {{- $start_port := $.Values.redis.port | default 6379 |int }}
+    {{- $servers := $.Values.redis.servers | default 1 | int }}
+    {{- $end_port := add $start_port $servers | int  }}
+    {{- $redis_conf := get $.Values.redis "redis.conf" }}
+    {{- $redisport_conf := "" }}
+    {{- $save := "\"\"" }}
+    {{- $appendonly := "no" }}
+    {{- $cluster_enabled :=  false }}
+    {{- $has_storage := and $.Values.redis.volume $.Values.redis.volume.storage  }}
+    {{- $readinessProbe :=  $.Values.redis.readinessProbe | dict }}
+    {{- $livenessProbe :=  $.Values.redis.livenessProbe | dict }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: redis
+  name: {{ $redis_name }}
 spec:
   selector:
     matchLabels:
-      workload.user.cattle.io/workloadselector: apps.statefulset-{{ $.Release.Namespace}}-{{ $redisName }}
+      workload.user.cattle.io/workloadselector: apps.statefulset-{{ $.Release.Namespace}}-{{ $redis_name }}
+      {{- range $k,$cluster := get $.Values.redis "redis-clusters" }}
+          {{- $ports = list }}
+          {{- $ports_len = 0 }}
+          {{- range $l,$redis_node := $cluster.servers }}
+                {{- $node = index (regexSplit ":" $redis_node -1) 0 }}
+                {{- $port = (index (regexSplit ":" $redis_node -1) 1) | int }}
+                {{- $node_index = (sub (trimPrefix "workload" $node | int) 1) }}
+                {{- if and (eq $i $node_index) (not (has $port $ports)) }}
+                    {{- $ports = append $ports $port }}
+                    {{- $ports_len = add $ports_len 1 }}
+                {{- end }}
+          {{- end }}
+          {{- range $l,$p := $ports  }}
+              {{- if eq $ports_len 1 }}
+      workload.user.cattle.io/rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-rediscluster-{{ $cluster.name }}
+              {{- else }}
+      workload.user.cattle.io/rediscluster.{{ $cluster.name }}.{{ $p }}.selector: apps.statefulset-{{ $.Release.Namespace}}-rediscluster-{{ $cluster.name }}-{{ $p }}
+              {{- end }}
+          {{- end}}
+      {{- end }}
   podManagementPolicy: OrderedReady
   replicas: 1
   revisionHistoryLimit: 10
-  serviceName: {{ $redisName }}
+  serviceName: {{ $redis_name }}
   template:
     metadata:
       creationTimestamp: null
       labels:
-        workload.user.cattle.io/workloadselector: apps.statefulset-{{ $.Release.Namespace}}-{{ $redisName }}
+        workload.user.cattle.io/workloadselector: apps.statefulset-{{ $.Release.Namespace}}-{{ $redis_name }}
+      {{- range $k,$cluster := get $.Values.redis "redis-clusters" }}
+          {{- $ports = list }}
+          {{- $ports_len = 0 }}
+          {{- range $l,$redis_node := $cluster.servers }}
+                {{- $node = index (regexSplit ":" $redis_node -1) 0 }}
+                {{- $port = (index (regexSplit ":" $redis_node -1) 1) | int }}
+                {{- $node_index = (sub (trimPrefix "workload" $node | int) 1) }}
+                {{- if and (eq $i $node_index) (not (has $port $ports)) }}
+                    {{- $ports = append $ports $port }}
+                    {{- $ports_len = add $ports_len 1 }}
+                {{- end }}
+          {{- end }}
+          {{- range $l,$p := $ports  }}
+              {{- if eq $ports_len 1 }}
+        workload.user.cattle.io/rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-rediscluster-{{ $cluster.name }}
+              {{- else }}
+        workload.user.cattle.io/rediscluster.{{ $cluster.name }}.{{ $p }}.selector: apps.statefulset-{{ $.Release.Namespace}}-rediscluster-{{ $cluster.name }}-{{ $p }}
+              {{- end }}
+          {{- end}}
+      {{- end }}
     spec:
       containers:
-        - command:
+        - args:
           - /usr/local/redis/bin/start_redis
+          - {{ $workload.clusterip }}1
+          workingDir: /usr/local/redis
           image: {{ $.Values.redis.image }}
           imagePullPolicy: Always
-          name: redis
+          name: {{ $redis_name }}
           resources: {}
           securityContext:
             allowPrivilegeEscalation: false
@@ -47,54 +112,94 @@ spec:
           terminationMessagePolicy: File
           tty: true
           stdin: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsGroup: 999
+            runAsNonRoot: true
+            runAsUser: 999
           volumeMounts:
           - mountPath: /usr/local/redis/bin
             name: redis-scripts
-          - mountPath: /usr/local/redis/conf/redis.conf
+          - mountPath: /usr/local/redis/conf/redis_common.conf
             name: redis-confs
-            subPath: redis.conf
-          {{- $start_port := $.Values.redis.port | default 6379 |int }}
-          {{- $servers := $.Values.redis.servers | default 1 | int }}
-          {{- $end_port := add $start_port $servers | int  }}
-          {{- $confName := "redis" }}
+            subPath: redis_common.conf
           {{- range $i,$port := untilStep $start_port $end_port 1 }}
-          - mountPath: /usr/local/redis/conf/redis_{{ $port }}.conf
-            name: redis-confs
-            {{- if le $workloads 1 }}
-              {{- $confName = "redis" }}
-            {{- else }}
-              {{- if le $workloads 9 }}
-                {{- $confName = print "redis" $redisIndex }}
-              {{- else if le $redisIndex 9 }}
-                {{- $confName = print  "redis0" $redisIndex }}
+              {{- $redisport_conf = (get $.Values.redis (print $redis_name $port ".conf")) | default (get $.Values.redis (print "redis-" $port ".conf")) | default false}}
+              {{- if and $redisport_conf $redis_conf }}
+                  {{- $save = (get $redisport_conf "save") | default (get $redis_conf "save") | default "\"\"" }}
+                  {{- $appendonly = (get $redisport_conf "appendonly") | default (get $redis_conf "appendonly") | default "no" }}
+                  {{- $cluster_enabled = eq ((get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes" }}
+              {{- else if $redisport_conf }}
+                  {{- $save = (get $redisport_conf "save") | default "\"\"" }}
+                  {{- $appendonly = (get $redisport_conf "appendonly") | default "no" }}
+                  {{- $cluster_enabled = eq ((get $redisport_conf "cluster-enabled") | default "no") "yes" }}
+              {{- else if $redis_conf }}
+                  {{- $save = (get $redis_conf "save") | default "\"\"" }}
+                  {{- $appendonly = (get $redis_conf "appendonly") | default "no" }}
+                  {{- $cluster_enabled = eq ((get $redis_conf "cluster-enabled") | default "no") "yes" }}
               {{- else }}
-                {{- $confName = print "redis" $redisIndex }}
-              {{- end }} 
-            {{- end }}
-            {{- if get $.Values.redis (print $redisName "-" $port) }}
-            subPath: {{ $confName }}_{{ $port}}.conf
-            {{- else }}
-            subPath: redis_{{ $port }}.conf
-            {{- end }}
-            {{- end }}
-            {{- if and $.Values.redis.volume $.Values.redis.volume.storage  }}
-            {{- if or $.Values.redis.save  (ne ($.Values.redis.appendonly | default "no")  "no") }}
+                  {{- $save = "\"\"" }}
+                  {{- $appendonly = "no" }}
+                  {{- $cluster_enabled =  false }}
+              {{- end }}
+              {{- if eq $save "\"\"" }}
+                  {{- $save = false }}
+              {{- end }}
+              {{- if eq $servers 1 }}
+          - mountPath: /usr/local/redis/conf/redis.conf
+              {{- else }}
+          - mountPath: /usr/local/redis/{{ $port }}/conf/redis.conf
+              {{- end }}
+            name: redis-confs
+            subPath: {{ $redis_name }}_{{ $port}}.conf
+          {{- end }}
+          {{- if $has_storage  }}
+              {{- if or $save  (ne $appendonly  "no") $cluster_enabled }}
+                  {{- range $i,$port := untilStep $start_port $end_port 1 }}
+                      {{- if eq $servers 1 }}
           - mountPath: /usr/local/redis/data
             name: redis-data
-            {{- if le $workloads 1 }}
-            subPath: data
-            {{- else }}
-            subPath: {{ $redisName }}/data
-            {{- end }}
-          {{- end }}
-          - mountPath: /usr/local/redis/logs
+            subPath: {{ $redis_name }}/data
+                      {{- else }}
+          - mountPath: /usr/local/redis/{{ $port }}/data
             name: redis-data
-            {{- if le $workloads 1 }}
-            subPath: logs
-            {{- else }}
-            subPath: {{$redisName}}/logs
-            {{- end }}
+            subPath: {{ $redis_name }}/{{ $port }}/data
+                      {{- end }}
+                  {{- end }}
+                  {{- range $i,$port := untilStep $start_port $end_port 1 }}
+                      {{- if eq $servers 1 }}
+          - mountPath: /usr/local/redis/logs
+            name: redis-logs
+            subPath: {{ $redis_name }}/logs
+                      {{- else }}
+          - mountPath: /usr/local/redis/{{ $port }}/logs
+            name: redis-data
+            subPath: {{ $redis_name }}/{{ $port }}/logs
+                      {{- end }}
+                  {{- end }}
+              {{- end }}
           {{- end }}
+          #readinessProbe:
+          #  failureThreshold: {{ $readinessProbe.failureThreshold | default 3 }}
+          #  successThreshold: {{ $readinessProbe.successThreshold | default 1 }}
+          #  initialDelaySeconds: {{ $readinessProbe.initialDelaySeconds | default 0 }}
+          #  timeoutSeconds: {{ $readinessProbe.timeoutSeconds | default 1 }}
+          #  periodSeconds: {{ $readinessProbe.periodSeconds | default 10 }}
+          #  exec:
+          #    command:
+          #      - /usr/local/redis/bin/redis_readiness
+          #livenessProbe:
+          #  failureThreshold: {{ $livenessProbe.failureThreshold | default 3 }}
+          #  successThreshold: {{ $livenessProbe.successThreshold | default 1 }}
+          #  initialDelaySeconds: {{ $livenessProbe.initialDelaySeconds | default 0 }}
+          #  timeoutSeconds: {{ $livenessProbe.timeoutSeconds | default 1 }}
+          #  periodSeconds: {{ $livenessProbe.periodSeconds | default 10 }}
+          #  exec:
+          #    command:
+          #      - /usr/local/redis/bin/redis_readiness
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       schedulerName: default-scheduler
@@ -109,12 +214,14 @@ spec:
           defaultMode: 292
           name: {{ $.Release.Name }}-confs
         name: redis-confs
-      {{- if and $.Values.redis.volume $.Values.redis.volume.storage  }}
+      {{- if $has_storage  }}
       - name: redis-data
         persistentVolumeClaim:
           claimName: {{ $.Release.Name}}-data
           type: persistentvolumeclaim
       {{- end }}
+      securityContext:
+        fsGroup: 999
   updateStrategy:
     rollingUpdate:
       partition: 0

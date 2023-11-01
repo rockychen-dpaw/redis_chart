@@ -1,3 +1,18 @@
+{{- $workloads := 0 }}
+{{- range $i,$workload := $.Values.redis.workloads }}
+    {{- $workloads = add $workloads 1}}
+{{- end }}
+{{- $start_port := $.Values.redis.port | default 6379 |int }}
+{{- $servers := $.Values.redis.servers | default 1 | int }}
+{{- $end_port := add $start_port $servers | int  }}
+{{- $redis_conf := (get $.Values.redis "redis.conf") | default dict }}
+{{- $redisport_conf := "" }}
+{{- $redisserver_conf := "" }}
+{{- $save := "\"\"" }}
+{{- $appendonly := "no" }}
+{{- $cluster_enabled :=  false }}
+{{- $has_storage := and $.Values.redis.volume $.Values.redis.volume.storage  }}
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -5,76 +20,91 @@ metadata:
   annotations:
     field.cattle.io/description: redis configurations
 data:
-  {{- $workloads := $.Values.redis.workloads | default 1 |int }}
-  {{- $start_port := $.Values.redis.port | default 6379 |int }}
-  {{- $servers := $.Values.redis.servers | default 1 | int }}
-  {{- $end_port := add $start_port $servers | int  }}
+  {{- $redis_name := "redis" }}
+  {{- range $i,$port := untilStep $start_port $end_port 1 }}
+      {{- range $j,$redisIndex := untilStep 1 (add $workloads 1 | int) 1 }}
+          {{- if le $workloads 1 }}
+              {{- $redis_name = "redis" }}
+          {{- else }}
+              {{- if le $workloads 9 }}
+                  {{- $redis_name = print "redis" $redisIndex }}
+              {{- else if le $redisIndex 9 }}
+                  {{- $redis_name = print  "redis0" $redisIndex }}
+              {{- else }}
+                  {{- $redis_name = print "redis" $redisIndex }}
+              {{- end }}
+          {{- end }}
+          {{- $redisport_conf = (get $.Values.redis (print "redis-" $port ".conf")) | default dict }}
+          {{- $redisserver_conf = (get $.Values.redis (print $redis_name "-" $port ".conf")) | default dict }}
+          {{- $save = (get $redisserver_conf "save") | default (get $redisport_conf "save") | default (get $redis_conf "save") | default "\"\"" }}
+          {{- $appendonly = (get $redisserver_conf "appendonly") | default (get $redisport_conf "appendonly") | default (get $redis_conf "appendonly") | default "no" }}
+          {{- $cluster_enabled = eq ((get $redisserver_conf "cluster-enabled") | default (get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes" }}
 
-  {{- range $i,$port := untilStep $start_port $end_port 1 }}
-  redis_{{ $port }}.conf: |-
+          {{- if not $save }}
+              {{- $save = "\"\"" }}
+          {{- end }}
+  {{ $redis_name }}_{{- $port}}.conf: |-
+    include /usr/local/redis/conf/redis_common.conf
     port {{ $port}}
-    pidfile /var/run/redis_{{ $port}}.pid
-    dbfilename dump_{{ $port }}.rdb
-    appendfilename appendonly_{{ $port }}.aof
-    {{- if and $.Values.redis.volume $.Values.redis.volume.storage  }}
-    {{- if or $.Values.redis.save  (ne ($.Values.redis.appendonly | default "no")  "no") }}
-    dir /usr/local/redis/data
-    {{- else }}
-    dir /tmp
-    {{- end }}
-    appendonly {{ $.Values.redis.appendonly | default "no" }}
-    save {{ $.Values.redis.save | default "\"\"" }}
-    logfile /usr/local/redis/logs/redis_{{ $port }}.log
-    {{- else }}
-    logfile /tmp/redis_{{ $port }}.log
-    appendonly "no"
-    save ""
-    dir /tmp
-    {{- end }}
-    include /usr/local/redis/conf/redis.conf
-  {{- end}}
-  {{- $confName := "redis" }}
-  {{- range $i,$port := untilStep $start_port $end_port 1 }}
-  {{- range $i,$redisIndex := untilStep 1 (add $workloads 1 | int) 1 }}
-  {{- if le $workloads 1 }}
-  {{- $confName = "redis" }}
-  {{- else }}
-  {{- if le $workloads 9 }}
-  {{- $confName = print "redis" $redisIndex }}
-  {{- else if le $redisIndex 9 }}
-  {{- $confName = print  "redis0" $redisIndex }}
-  {{- else }}
-  {{- $confName = print "redis" $redisIndex }}
-  {{- end }}
-  {{- end }}
-  {{- if get $.Values.redis (print $confName "-" $port) }}
-  {{ $confName }}_{{- $port}}.conf: |-
-    port {{ $port}}
-    pidfile /var/run/redis_{{ $port}}.pid
-    dbfilename dump_{{ $port }}.rdb
-    appendfilename appendonly_{{ $port }}.aof
-    {{- if and $.Values.redis.volume $.Values.redis.volume.storage  }}
-    {{- if or $.Values.redis.save  (ne ($.Values.redis.appendonly | default "no")  "no") }}
-    dir /usr/local/redis/data
-    {{- else }}
-    dir /tmp
-    {{- end }}
-    appendonly {{ $.Values.redis.appendonly | default "no" }}
-    save {{ $.Values.redis.save | default "\"\"" }}
-    logfile /usr/local/redis/logs/redis_{{ $port }}.log
-    {{- else }}
-    logfile /tmp/redis_{{ $port }}.log
-    appendonly "no"
-    save ""
-    dir /tmp
-    {{- end }}
-    {{- range $key,$value := (get $.Values.redis (print $confName "-" $port)) }}
+          {{- if eq $servers 1 }}
+    pidfile /data/redis.pid
+          {{- else }}
+    pidfile /data/redis_{{ $port}}.pid
+          {{- end }}
+          {{- if $cluster_enabled }}
+    cluster-enabled yes
+    cluster-announce-ip {{ get (index $.Values.redis.workloads $j) "clusterip" }}
+    cluster-announce-port {{ $port }}
+          {{- else }}
+    cluster-enabled no
+          {{- end }}
+          {{- if $redis_conf }}
+              {{- range $key,$value := $redis_conf }}
+                  {{- if and (ne $key "save") (ne $key "appendonly") (ne $key "cluster-enabled")}}
     {{ $key }} {{ $value }}
-    {{- end }}
-    include /usr/local/redis/conf/redis.conf
-  {{- end}}
-  {{- end}}
+                  {{- end }}
+              {{- end }}
+          {{- end }}
+          {{- if $redisport_conf }}
+              {{- range $key,$value := $redisport_conf }}
+                  {{- if and (ne $key "save") (ne $key "appendonly") (ne $key "cluster-enabled")}}
+    {{ $key }} {{ $value }}
+                  {{- end }}
+              {{- end }}
+          {{- end }}
+          {{- if $redisserver_conf }}
+              {{- range $key,$value := $redisserver_conf }}
+                  {{- if and (ne $key "save") (ne $key "appendonly") (ne $key "cluster-enabled")}}
+    {{ $key }} {{ $value }}
+                  {{- end }}
+              {{- end }}
+          {{- end }}
+
+          {{- if $has_storage  }}
+              {{- if or (ne $save "\"\"")  (eq $appendonly "yes") $cluster_enabled }}
+                  {{- if eq $servers 1 }}
+    dir /usr/local/redis/data
+                  {{- else }}
+    dir /usr/local/redis/{{ $port }}/data
+                  {{- end }}
+              {{- else }}
+    dir /tmp
+              {{- end }}
+    appendonly {{ $appendonly }}
+    save {{ $save }}
+              {{- if eq $servers 1 }}
+    logfile /usr/local/redis/logs/redis.log
+              {{- else }}
+    logfile /usr/local/redis/{{ $port }}/logs/redis.log
+              {{- end }}
+          {{- else }}
+    logfile /tmp/redis_{{ $port }}.log
+    appendonly "no"
+    save "\"\""
+    dir /tmp
+          {{- end }}
+      {{- end}}
   {{- end}}
 binaryData:
-  redis.conf: >-
-{{ include "redis.redis.conf" . | b64enc | indent 4 }}  
+  redis_common.conf: >-
+{{ include "redis.redis_common.conf" . | b64enc | indent 4 }}  

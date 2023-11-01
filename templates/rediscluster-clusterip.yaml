@@ -1,0 +1,61 @@
+{{- $clusters := 0 }}
+{{- range $i,$cluster := (get $.Values.redis "redis-clusters" | default dict) }}
+    {{- $clusters = add $clusters 1}}
+{{- end }}
+{{- $cluster_node := false }}
+{{- $redis_clusters := list }}
+{{- $total_len := 0 }}
+{{- range $i,$cluster := (get $.Values.redis "redis-clusters" | default dict) }}
+    {{- $cluster_ports := list }}
+    {{- $cluster_ports_len := 0}}
+    {{- range $redis_node := $cluster.servers }}
+        {{- $port := (index (regexSplit ":" $redis_node -1) 1 | int) }}
+        {{- if not (has $port $cluster_ports) }}
+            {{- $cluster_ports = append $cluster_ports $port }}
+            {{- $cluster_ports_len = add $cluster_ports_len 1 }}
+            {{- $total_len = add $total_len 1 }}
+        {{- end}}
+    {{- end }}
+    {{- $redis_clusters = append $redis_clusters (dict "name" $cluster.name "ports" $cluster_ports "len" $cluster_ports_len) }}
+{{- end }}
+{{- range $i,$cluster := $redis_clusters }}
+    {{- range $j,$port := $cluster.ports }}
+        {{- if gt $total_len 1 }}
+---
+        {{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+        {{- if eq $cluster.name "default" }}
+            {{- if gt $cluster.len 1 }}
+  name: rediscluster-{{ $port }}
+            {{- else }}
+  name: rediscluster
+            {{- end }}
+        {{- else }}
+            {{- if gt $cluster.len 1 }}
+  name: rediscluster-{{ $cluster.name}}-{{ $port }}
+            {{- else }}
+  name: rediscluster-{{ $cluster.name}}
+            {{- end }}
+        {{- end }}
+spec:
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: port-{{ $port }}
+      port: {{ $port }}
+      protocol: TCP
+      targetPort: {{ $port }}
+  selector:
+        {{- if eq $cluster.len 1 }}
+    workload.user.cattle.io/rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-rediscluster-{{ $cluster.name }}
+        {{- else }}
+    workload.user.cattle.io/rediscluster.{{ $cluster.name }}.{{ $port }}.selector: apps.statefulset-{{ $.Release.Namespace}}-rediscluster-{{ $cluster.name }}-{{ $port }}
+        {{- end }}
+  sessionAffinity: None
+  type: ClusterIP
+    {{- end }}
+{{- end }}

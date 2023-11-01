@@ -1,16 +1,73 @@
 redis:
-  image: "redis:6.2"
-  workloads: 12
+  image: "redis:7.2.2"
+  workloads: 
+  - clusterip: 10.0.35.114
+  - clusterip: 10.0.35.115
+  - clusterip: 10.0.35.116
+  - clusterip: 10.0.35.117
+  - clusterip: 10.0.35.118
+  - clusterip: 10.0.35.119
   port: 6379
-  servers: 4
-  appendonly: "yes"
-  save: 3600 10000
-  redis01-6379:
-    a: 1
-    b: 2
-  redis05-6382:
-    x: 1
-    "y": 2
-  #volume:
-      #storage: 2Gi
+  servers: 2
+  redis.conf:
+    appendonly: "no"
+    save: ""
+    cluster-enabled: "no"
+  redis-6379.conf:
+    cluster-enabled: "yes"
+    cluster-node-timeout: 15000
+    cluster-require-full-coverage: "no" 
+    cluster-replica-no-failover: "no"
+    cluster-allow-reads-when-down: "yes"
+    cluster-allow-replica-migration: "yes"
+    cluster-migration-barrier: 1
+    cluster-replica-validity-factor: 10
+  redis1-6380.conf:
+    cluster-enabled: "yes"
+    cluster-node-timeout: 15000
+    cluster-require-full-coverage: "no" 
+    cluster-replica-no-failover: "no"
+    cluster-allow-reads-when-down: "yes"
+    cluster-allow-replica-migration: "yes"
+    cluster-migration-barrier: 1
+    cluster-replica-validity-factor: 10
+  redis2-6380.conf:
+    cluster-enabled: "yes"
+    cluster-node-timeout: 15000
+    cluster-require-full-coverage: "no" 
+    cluster-replica-no-failover: "no"
+    cluster-allow-reads-when-down: "yes"
+    cluster-allow-replica-migration: "yes"
+    cluster-migration-barrier: 1
+    cluster-replica-validity-factor: 10
+  redis-6380.conf:
+    save: 3600 10000
+    appendonly: "yes"
+  redis-clusters:
+  - name: "default"
+    servers: 
+    - "workload1:6379"
+    - "workload2:6379"
+    - "workload3:6379"
+    - "workload4:6379"
+    - "workload5:6379"
+    - "workload6:6379" 
+    - "workload1:6380" 
+    - "workload2:6380" 
+    cluster-replicas: 1
+  volume:
+    storage: 1Gi
+  readinessProbe:
+    failureThreshold: 3
+    successThreshold: 1
+    initialDelaySeconds: 0
+    timeoutSeconds: 1
+    periodSeconds: 10
+  livenessProbe:
+    failureThreshold: 3
+    successThreshold: 1
+    initialDelaySeconds: 0
+    timeoutSeconds: 1
+    periodSeconds: 10
+    
 
