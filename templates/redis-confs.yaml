@@ -34,11 +34,11 @@ data:
                   {{- $redis_name = print "redis" $redisIndex }}
               {{- end }}
           {{- end }}
-          {{- $redisport_conf = (get $.Values.redis (print "redis-" $port ".conf")) | default dict }}
-          {{- $redisserver_conf = (get $.Values.redis (print $redis_name "-" $port ".conf")) | default dict }}
+          {{- $redisport_conf = (get $.Values.redis (print "redis_" $port ".conf")) | default dict }}
+          {{- $redisserver_conf = (get $.Values.redis (print $redis_name "_" $port ".conf")) | default dict }}
           {{- $save = (get $redisserver_conf "save") | default (get $redisport_conf "save") | default (get $redis_conf "save") | default "\"\"" }}
           {{- $appendonly = (get $redisserver_conf "appendonly") | default (get $redisport_conf "appendonly") | default (get $redis_conf "appendonly") | default "no" }}
-          {{- $cluster_enabled = eq ((get $redisserver_conf "cluster-enabled") | default (get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes" }}
+          {{- $cluster_enabled = and $has_storage (eq ((get $redisserver_conf "cluster-enabled") | default (get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes") }}
 
           {{- if not $save }}
               {{- $save = "\"\"" }}
@@ -47,9 +47,9 @@ data:
     include /usr/local/redis/conf/redis_common.conf
     port {{ $port}}
           {{- if eq $servers 1 }}
-    pidfile /data/redis.pid
+    pidfile {{ $.Values.pidfolder | default "/data" }}/redis.pid
           {{- else }}
-    pidfile /data/redis_{{ $port}}.pid
+    pidfile {{ $.Values.pidfolder | default "/data" }}/redis_{{ $port }}.pid
           {{- end }}
           {{- if $cluster_enabled }}
     cluster-enabled yes

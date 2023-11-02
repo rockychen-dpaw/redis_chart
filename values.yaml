@@ -1,5 +1,6 @@
 redis:
   image: "redis:7.2.2"
+  pidfolder: "/data"
   workloads: 
   - clusterip: 10.0.35.114
   - clusterip: 10.0.35.115
@@ -12,8 +13,6 @@ redis:
   redis.conf:
     appendonly: "no"
     save: ""
-    cluster-enabled: "no"
-  redis-6379.conf:
     cluster-enabled: "yes"
     cluster-node-timeout: 15000
     cluster-require-full-coverage: "no" 
@@ -22,39 +21,28 @@ redis:
     cluster-allow-replica-migration: "yes"
     cluster-migration-barrier: 1
     cluster-replica-validity-factor: 10
-  redis1-6380.conf:
-    cluster-enabled: "yes"
-    cluster-node-timeout: 15000
-    cluster-require-full-coverage: "no" 
-    cluster-replica-no-failover: "no"
-    cluster-allow-reads-when-down: "yes"
-    cluster-allow-replica-migration: "yes"
-    cluster-migration-barrier: 1
-    cluster-replica-validity-factor: 10
-  redis2-6380.conf:
-    cluster-enabled: "yes"
-    cluster-node-timeout: 15000
-    cluster-require-full-coverage: "no" 
-    cluster-replica-no-failover: "no"
-    cluster-allow-reads-when-down: "yes"
-    cluster-allow-replica-migration: "yes"
-    cluster-migration-barrier: 1
-    cluster-replica-validity-factor: 10
-  redis-6380.conf:
+  redis_6379.conf:
     save: 3600 10000
     appendonly: "yes"
-  redis-clusters:
+  redisClusters:
   - name: "default"
-    servers: 
-    - "workload1:6379"
-    - "workload2:6379"
-    - "workload3:6379"
-    - "workload4:6379"
-    - "workload5:6379"
-    - "workload6:6379" 
-    - "workload1:6380" 
-    - "workload2:6380" 
-    cluster-replicas: 1
+    servers: #index is 1 based
+    - "redis1:6379"
+    - "redis2:6379"
+    - "redis3:6379"
+    - "redis4:6379"
+    - "redis5:6379"
+    - "redis6:6379" 
+    clusterReplicas: 1
+  - name: "auth2"
+    servers: #index is 1 based
+    - "redis1:6380"
+    - "redis2:6380"
+    - "redis3:6380"
+    - "redis4:6380"
+    - "redis5:6380"
+    - "redis6:6380" 
+    clusterReplicas: 1
   volume:
     storage: 1Gi
   readinessProbe:

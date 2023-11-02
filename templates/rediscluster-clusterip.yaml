@@ -1,11 +1,6 @@
-{{- $clusters := 0 }}
-{{- range $i,$cluster := (get $.Values.redis "redis-clusters" | default dict) }}
-    {{- $clusters = add $clusters 1}}
-{{- end }}
-{{- $cluster_node := false }}
 {{- $redis_clusters := list }}
 {{- $total_len := 0 }}
-{{- range $i,$cluster := (get $.Values.redis "redis-clusters" | default dict) }}
+{{- range $i,$cluster := (get $.Values.redis "redisClusters" | default dict) }}
     {{- $cluster_ports := list }}
     {{- $cluster_ports_len := 0}}
     {{- range $redis_node := $cluster.servers }}

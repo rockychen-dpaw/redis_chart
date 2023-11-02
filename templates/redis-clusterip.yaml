@@ -42,11 +42,11 @@ spec:
       port: {{ $port }}
       protocol: TCP
       targetPort: {{ $port }}
-      {{- range $k,$cluster := get $.Values.redis "redis-clusters" }}
+      {{- range $k,$cluster := get $.Values.redis "redisClusters" | default dict }}
           {{- $cluster_node = false }}
           {{- range $l,$redis_node := $cluster.servers }}
                 {{- $node = index (regexSplit ":" $redis_node -1) 0 }}
-                {{- $node_index = (sub (trimPrefix "workload" $node | int) 1) }}
+                {{- $node_index = (sub (trimPrefix "redis" $node | int) 1) }}
                 {{- if and (eq $i $node_index) (hasSuffix (print ":" $port) $redis_node) }}
                     {{- $cluster_node = true }}
                 {{- end }}

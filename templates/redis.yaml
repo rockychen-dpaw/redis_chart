@@ -9,6 +9,19 @@
 {{- $ports := list }}
 {{- $port := 0 }}
 {{- $ports_len := 0 }}
+{{- $redis_conf := (get $.Values.redis "redis.conf") | default dict  }}
+{{- $cluster_enabled :=  false }}
+{{- $start_port := $.Values.redis.port | default 6379 |int }}
+{{- $servers := $.Values.redis.servers | default 1 | int }}
+{{- $end_port := add $start_port $servers | int  }}
+{{- $redisport_conf := dict }}
+{{- $redisserver_conf := dict }}
+{{- $save := "\"\"" }}
+{{- $appendonly := "no" }}
+{{- $cluster_enabled :=  false }}
+{{- $readinessProbe :=  $.Values.redis.readinessProbe | default dict }}
+{{- $livenessProbe :=  $.Values.redis.livenessProbe | default dict }}
+{{- $has_storage := and $.Values.redis.volume $.Values.redis.volume.storage  }}
 {{- range $i,$workload := $.Values.redis.workloads }}
     {{- $redis_index = add $i 1 }}
     {{- if le $workloads 1 }}
@@ -23,19 +36,6 @@
             {{- $redis_name = print $.Release.Name $redis_index }}
         {{- end }}
     {{- end }}
-    {{- $redis_conf := get $.Values.redis "redis.conf" }}
-    {{- $cluster_enabled :=  false }}
-    {{- $start_port := $.Values.redis.port | default 6379 |int }}
-    {{- $servers := $.Values.redis.servers | default 1 | int }}
-    {{- $end_port := add $start_port $servers | int  }}
-    {{- $redis_conf := get $.Values.redis "redis.conf" }}
-    {{- $redisport_conf := "" }}
-    {{- $save := "\"\"" }}
-    {{- $appendonly := "no" }}
-    {{- $cluster_enabled :=  false }}
-    {{- $has_storage := and $.Values.redis.volume $.Values.redis.volume.storage  }}
-    {{- $readinessProbe :=  $.Values.redis.readinessProbe | dict }}
-    {{- $livenessProbe :=  $.Values.redis.livenessProbe | dict }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -44,13 +44,13 @@ spec:
   selector:
     matchLabels:
       workload.user.cattle.io/workloadselector: apps.statefulset-{{ $.Release.Namespace}}-{{ $redis_name }}
-      {{- range $k,$cluster := get $.Values.redis "redis-clusters" }}
+      {{- range $k,$cluster := get $.Values.redis "redisClusters" | default list }}
           {{- $ports = list }}
           {{- $ports_len = 0 }}
           {{- range $l,$redis_node := $cluster.servers }}
                 {{- $node = index (regexSplit ":" $redis_node -1) 0 }}
                 {{- $port = (index (regexSplit ":" $redis_node -1) 1) | int }}
-                {{- $node_index = (sub (trimPrefix "workload" $node | int) 1) }}
+                {{- $node_index = (sub (trimPrefix "redis" $node | int) 1) }}
                 {{- if and (eq $i $node_index) (not (has $port $ports)) }}
                     {{- $ports = append $ports $port }}
                     {{- $ports_len = add $ports_len 1 }}
@@ -73,13 +73,13 @@ spec:
       creationTimestamp: null
       labels:
         workload.user.cattle.io/workloadselector: apps.statefulset-{{ $.Release.Namespace}}-{{ $redis_name }}
-      {{- range $k,$cluster := get $.Values.redis "redis-clusters" }}
+      {{- range $k,$cluster := get $.Values.redis "redisClusters" | default list }}
           {{- $ports = list }}
           {{- $ports_len = 0 }}
           {{- range $l,$redis_node := $cluster.servers }}
                 {{- $node = index (regexSplit ":" $redis_node -1) 0 }}
                 {{- $port = (index (regexSplit ":" $redis_node -1) 1) | int }}
-                {{- $node_index = (sub (trimPrefix "workload" $node | int) 1) }}
+                {{- $node_index = (sub (trimPrefix "redis" $node | int) 1) }}
                 {{- if and (eq $i $node_index) (not (has $port $ports)) }}
                     {{- $ports = append $ports $port }}
                     {{- $ports_len = add $ports_len 1 }}
@@ -97,7 +97,7 @@ spec:
       containers:
         - args:
           - /usr/local/redis/bin/start_redis
-          - {{ $workload.clusterip }}1
+          - {{ $workload.clusterip }}
           workingDir: /usr/local/redis
           image: {{ $.Values.redis.image }}
           imagePullPolicy: Always
@@ -127,26 +127,13 @@ spec:
             name: redis-confs
             subPath: redis_common.conf
           {{- range $i,$port := untilStep $start_port $end_port 1 }}
-              {{- $redisport_conf = (get $.Values.redis (print $redis_name $port ".conf")) | default (get $.Values.redis (print "redis-" $port ".conf")) | default false}}
-              {{- if and $redisport_conf $redis_conf }}
-                  {{- $save = (get $redisport_conf "save") | default (get $redis_conf "save") | default "\"\"" }}
-                  {{- $appendonly = (get $redisport_conf "appendonly") | default (get $redis_conf "appendonly") | default "no" }}
-                  {{- $cluster_enabled = eq ((get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes" }}
-              {{- else if $redisport_conf }}
-                  {{- $save = (get $redisport_conf "save") | default "\"\"" }}
-                  {{- $appendonly = (get $redisport_conf "appendonly") | default "no" }}
-                  {{- $cluster_enabled = eq ((get $redisport_conf "cluster-enabled") | default "no") "yes" }}
-              {{- else if $redis_conf }}
-                  {{- $save = (get $redis_conf "save") | default "\"\"" }}
-                  {{- $appendonly = (get $redis_conf "appendonly") | default "no" }}
-                  {{- $cluster_enabled = eq ((get $redis_conf "cluster-enabled") | default "no") "yes" }}
-              {{- else }}
+              {{- $redisport_conf = (get $.Values.redis (print "redis_" $port ".conf")) | default dict}}
+              {{- $redisserver_conf = (get $.Values.redis (print $redis_name "_" $port ".conf")) | default dict }}
+              {{- $save = (get $redisserver_conf "save") | default (get $redisport_conf "save") | default (get $redis_conf "save") | default "\"\"" }}
+              {{- $appendonly = (get $redisserver_conf "appendonly") | default (get $redisport_conf "appendonly") | default (get $redis_conf "appendonly") | default "no" }}
+              {{- $cluster_enabled = and $has_storage (eq ((get $redisserver_conf "cluster-enabled") | default (get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes") }}
+              {{- if not $save }}
                   {{- $save = "\"\"" }}
-                  {{- $appendonly = "no" }}
-                  {{- $cluster_enabled =  false }}
-              {{- end }}
-              {{- if eq $save "\"\"" }}
-                  {{- $save = false }}
               {{- end }}
               {{- if eq $servers 1 }}
           - mountPath: /usr/local/redis/conf/redis.conf
@@ -157,8 +144,16 @@ spec:
             subPath: {{ $redis_name }}_{{ $port}}.conf
           {{- end }}
           {{- if $has_storage  }}
-              {{- if or $save  (ne $appendonly  "no") $cluster_enabled }}
-                  {{- range $i,$port := untilStep $start_port $end_port 1 }}
+              {{- range $i,$port := untilStep $start_port $end_port 1 }}
+                  {{- $redisport_conf = (get $.Values.redis (print "redis_" $port ".conf")) | default dict}}
+                  {{- $redisserver_conf = (get $.Values.redis (print $redis_name "_" $port ".conf")) | default dict }}
+                  {{- $save = (get $redisserver_conf "save") | default (get $redisport_conf "save") | default (get $redis_conf "save") | default "\"\"" }}
+                  {{- $appendonly = (get $redisserver_conf "appendonly") | default (get $redisport_conf "appendonly") | default (get $redis_conf "appendonly") | default "no" }}
+                  {{- $cluster_enabled = and $has_storage (eq ((get $redisserver_conf "cluster-enabled") | default (get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes") }}
+                  {{- if not $save }}
+                      {{- $save = "\"\"" }}
+                  {{- end }}
+                  {{- if or (ne $save "\"\"")  (ne $appendonly  "no") $cluster_enabled }}
                       {{- if eq $servers 1 }}
           - mountPath: /usr/local/redis/data
             name: redis-data
@@ -169,37 +164,37 @@ spec:
             subPath: {{ $redis_name }}/{{ $port }}/data
                       {{- end }}
                   {{- end }}
-                  {{- range $i,$port := untilStep $start_port $end_port 1 }}
-                      {{- if eq $servers 1 }}
+              {{- end }}
+              {{- range $i,$port := untilStep $start_port $end_port 1 }}
+                  {{- if eq $servers 1 }}
           - mountPath: /usr/local/redis/logs
             name: redis-logs
             subPath: {{ $redis_name }}/logs
-                      {{- else }}
+                  {{- else }}
           - mountPath: /usr/local/redis/{{ $port }}/logs
             name: redis-data
             subPath: {{ $redis_name }}/{{ $port }}/logs
-                      {{- end }}
                   {{- end }}
               {{- end }}
           {{- end }}
-          #readinessProbe:
-          #  failureThreshold: {{ $readinessProbe.failureThreshold | default 3 }}
-          #  successThreshold: {{ $readinessProbe.successThreshold | default 1 }}
-          #  initialDelaySeconds: {{ $readinessProbe.initialDelaySeconds | default 0 }}
-          #  timeoutSeconds: {{ $readinessProbe.timeoutSeconds | default 1 }}
-          #  periodSeconds: {{ $readinessProbe.periodSeconds | default 10 }}
-          #  exec:
-          #    command:
-          #      - /usr/local/redis/bin/redis_readiness
-          #livenessProbe:
-          #  failureThreshold: {{ $livenessProbe.failureThreshold | default 3 }}
-          #  successThreshold: {{ $livenessProbe.successThreshold | default 1 }}
-          #  initialDelaySeconds: {{ $livenessProbe.initialDelaySeconds | default 0 }}
-          #  timeoutSeconds: {{ $livenessProbe.timeoutSeconds | default 1 }}
-          #  periodSeconds: {{ $livenessProbe.periodSeconds | default 10 }}
-          #  exec:
-          #    command:
-          #      - /usr/local/redis/bin/redis_readiness
+          readinessProbe:
+            failureThreshold: {{ $readinessProbe.failureThreshold | default 3 }}
+            successThreshold: {{ $readinessProbe.successThreshold | default 1 }}
+            initialDelaySeconds: {{ $readinessProbe.initialDelaySeconds | default 0 }}
+            timeoutSeconds: {{ $readinessProbe.timeoutSeconds | default 1 }}
+            periodSeconds: {{ $readinessProbe.periodSeconds | default 10 }}
+            exec:
+              command:
+                - /usr/local/redis/bin/redis_readiness
+          livenessProbe:
+            failureThreshold: {{ $livenessProbe.failureThreshold | default 3 }}
+            successThreshold: {{ $livenessProbe.successThreshold | default 1 }}
+            initialDelaySeconds: {{ $livenessProbe.initialDelaySeconds | default 0 }}
+            timeoutSeconds: {{ $livenessProbe.timeoutSeconds | default 1 }}
+            periodSeconds: {{ $livenessProbe.periodSeconds | default 10 }}
+            exec:
+              command:
+                - /usr/local/redis/bin/redis_readiness
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       schedulerName: default-scheduler
