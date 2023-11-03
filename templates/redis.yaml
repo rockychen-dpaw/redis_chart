@@ -3,6 +3,7 @@
     {{- $workloads = add $workloads 1}}
 {{- end }}
 {{- $redis_name := $.Release.Name }}
+{{- $conf_name := "redis" }}
 {{- $redis_index := 0 }}
 {{- $node_index := 0 }}
 {{- $node := 0 }}
@@ -26,14 +27,18 @@
     {{- $redis_index = add $i 1 }}
     {{- if le $workloads 1 }}
         {{- $redis_name = $.Release.Name }}
+        {{- $conf_name = "redis" }}
     {{- else }}
 ---
         {{- if le $workloads 9 }}
             {{- $redis_name = print $.Release.Name $redis_index }}
+            {{- $conf_name = print "redis" $redis_index }}
         {{- else if le $redis_index 9 }}
             {{- $redis_name = print $.Release.Name "0" $redis_index }}
+            {{- $conf_name = print "redis0" $redis_index }}
         {{ else }}
             {{- $redis_name = print $.Release.Name $redis_index }}
+            {{- $conf_name = print "redis" $redis_index }}
         {{- end }}
     {{- end }}
 apiVersion: apps/v1
@@ -58,9 +63,9 @@ spec:
           {{- end }}
           {{- range $l,$p := $ports  }}
               {{- if eq $ports_len 1 }}
-      workload.user.cattle.io/rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-rediscluster-{{ $cluster.name }}
+      workload.user.cattle.io/{{ $.Release.Name}}.rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name}}-rediscluster-{{ $cluster.name }}
               {{- else }}
-      workload.user.cattle.io/rediscluster.{{ $cluster.name }}.{{ $p }}.selector: apps.statefulset-{{ $.Release.Namespace}}-rediscluster-{{ $cluster.name }}-{{ $p }}
+      workload.user.cattle.io/{{ $.Release.Name}}.rediscluster.{{ $cluster.name }}.{{ $p }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name}}-rediscluster-{{ $cluster.name }}-{{ $p }}
               {{- end }}
           {{- end}}
       {{- end }}
@@ -87,9 +92,9 @@ spec:
           {{- end }}
           {{- range $l,$p := $ports  }}
               {{- if eq $ports_len 1 }}
-        workload.user.cattle.io/rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-rediscluster-{{ $cluster.name }}
+        workload.user.cattle.io/{{ $.Release.Name}}.rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name}}-rediscluster-{{ $cluster.name }}
               {{- else }}
-        workload.user.cattle.io/rediscluster.{{ $cluster.name }}.{{ $p }}.selector: apps.statefulset-{{ $.Release.Namespace}}-rediscluster-{{ $cluster.name }}-{{ $p }}
+        workload.user.cattle.io/{{ $.Release.Name}}.rediscluster.{{ $cluster.name }}.{{ $p }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name}}-rediscluster-{{ $cluster.name }}-{{ $p }}
               {{- end }}
           {{- end}}
       {{- end }}
@@ -128,7 +133,7 @@ spec:
             subPath: redis_common.conf
           {{- range $i,$port := untilStep $start_port $end_port 1 }}
               {{- $redisport_conf = (get $.Values.redis (print "redis_" $port ".conf")) | default dict}}
-              {{- $redisserver_conf = (get $.Values.redis (print $redis_name "_" $port ".conf")) | default dict }}
+              {{- $redisserver_conf = (get $.Values.redis (print $conf_name "_" $port ".conf")) | default dict }}
               {{- $save = (get $redisserver_conf "save") | default (get $redisport_conf "save") | default (get $redis_conf "save") | default "\"\"" }}
               {{- $appendonly = (get $redisserver_conf "appendonly") | default (get $redisport_conf "appendonly") | default (get $redis_conf "appendonly") | default "no" }}
               {{- $cluster_enabled = and $has_storage (eq ((get $redisserver_conf "cluster-enabled") | default (get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes") }}
@@ -146,7 +151,7 @@ spec:
           {{- if $has_storage  }}
               {{- range $i,$port := untilStep $start_port $end_port 1 }}
                   {{- $redisport_conf = (get $.Values.redis (print "redis_" $port ".conf")) | default dict}}
-                  {{- $redisserver_conf = (get $.Values.redis (print $redis_name "_" $port ".conf")) | default dict }}
+                  {{- $redisserver_conf = (get $.Values.redis (print $conf_name "_" $port ".conf")) | default dict }}
                   {{- $save = (get $redisserver_conf "save") | default (get $redisport_conf "save") | default (get $redis_conf "save") | default "\"\"" }}
                   {{- $appendonly = (get $redisserver_conf "appendonly") | default (get $redisport_conf "appendonly") | default (get $redis_conf "appendonly") | default "no" }}
                   {{- $cluster_enabled = and $has_storage (eq ((get $redisserver_conf "cluster-enabled") | default (get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes") }}

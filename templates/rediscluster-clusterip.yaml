@@ -23,15 +23,15 @@ kind: Service
 metadata:
         {{- if eq $cluster.name "default" }}
             {{- if gt $cluster.len 1 }}
-  name: rediscluster-{{ $port }}
+  name: {{ $.Release.Name }}-rediscluster-{{ $port }}
             {{- else }}
-  name: rediscluster
+  name: {{ $.Release.Name }}-rediscluster
             {{- end }}
         {{- else }}
             {{- if gt $cluster.len 1 }}
-  name: rediscluster-{{ $cluster.name}}-{{ $port }}
+  name: {{ $.Release.Name }}-rediscluster-{{ $cluster.name}}-{{ $port }}
             {{- else }}
-  name: rediscluster-{{ $cluster.name}}
+  name: {{ $.Release.Name }}-rediscluster-{{ $cluster.name}}
             {{- end }}
         {{- end }}
 spec:
@@ -46,9 +46,9 @@ spec:
       targetPort: {{ $port }}
   selector:
         {{- if eq $cluster.len 1 }}
-    workload.user.cattle.io/rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-rediscluster-{{ $cluster.name }}
+    workload.user.cattle.io/{{ $.Release.Name }}.rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name }}-rediscluster-{{ $cluster.name }}
         {{- else }}
-    workload.user.cattle.io/rediscluster.{{ $cluster.name }}.{{ $port }}.selector: apps.statefulset-{{ $.Release.Namespace}}-rediscluster-{{ $cluster.name }}-{{ $port }}
+    workload.user.cattle.io/{{ $.Release.Name }}.rediscluster.{{ $cluster.name }}.{{ $port }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name }}-rediscluster-{{ $cluster.name }}-{{ $port }}
         {{- end }}
   sessionAffinity: None
   type: ClusterIP
