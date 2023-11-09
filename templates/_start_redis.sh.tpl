@@ -5,9 +5,11 @@ REDIS_DIR=$( cd -- "$( dirname -- "${SCRIPT_DIR}" )" &> /dev/null && pwd )
 
 PORT={{ $.Values.redis.port | default 6379 | int }}
 SERVERS={{ $.Values.redis.servers | default 1 | int }}
-NODENAME="$1"
 
 declare -A PASSWORDS
+{{- $replicas := $.Values.redis.replicas | default 1 | int }}
+{{- $workload_index := 0 }}
+{{- $replica_index := 0 }}
 {{- $start_port := $.Values.redis.port | default 6379 |int }}
 {{- $servers := $.Values.redis.servers | default 1 | int }}
 {{- $end_port := add $start_port $servers | int  }}
@@ -20,7 +22,7 @@ PASSWORDS[{{ $port | quote }}]={{ (get $redisport_conf "requirepass") | default 
 
 #check whether all servers are up
 counter=1
-while [ $counter -le $SERVERS ]
+while [[ $counter -le $SERVERS ]]
 do
     if [[ "${PASSWORDS["$PORT"]}" == "" ]]
     then
@@ -31,6 +33,7 @@ do
     status=$?
     if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ "$res" != "PONG" ]]
     then
+      {{- if eq $replicas 1 }}
         if [[ $SERVERS -eq 1 ]]
         then
             echo "redis-server $REDIS_DIR/conf/redis.conf"
@@ -39,6 +42,16 @@ do
             echo "redis-server $REDIS_DIR/${PORT}/conf/redis.conf"
             redis-server $REDIS_DIR/${PORT}/conf/redis.conf
         fi
+      {{- else }}
+        if [[ $SERVERS -eq 1 ]]
+        then
+            echo "redis-server $REDIS_DIR/conf/${HOSTNAME}/redis.conf"
+            redis-server $REDIS_DIR/conf/${HOSTNAME}/redis.conf
+        else
+            echo "redis-server $REDIS_DIR/${PORT}/conf/${HOSTNAME}/redis.conf"
+            redis-server $REDIS_DIR/${PORT}/conf/${HOSTNAME}/redis.conf
+        fi
+      {{- end }}
         if [[ $? -eq 0 ]]
         then
             echo "Succeed to start the ${counter}th redis server on port ${PORT}"
@@ -61,10 +74,6 @@ do
             then
                 echo "The redis server(127.0.0.1:${PORT}) is ready to use."
                 break
-            elif [[ ${attempts} -gt 300 ]]
-            then
-                echo "The redis server(127.0.0.1:${PORT}) is down."
-                exit 1
             fi
             sleep 1
             ((attempts++))
@@ -87,9 +96,9 @@ function check_related_clusters(){
     do
         server=${cluster_nodes[$(( $index * 2 ))]}
         port=${cluster_nodes[$(( $index * 2 + 1 ))]}
-        if [[ "${server}" == "${NODENAME}" ]]
+        if [[ "${server}" == "${HOSTNAME}" ]]
         then
-            echo "The redis server(${NODENAME}:${port}) is the member of the redis cluster(${cluster_name}). Check whether it was created or not."
+            echo "The redis server(${HOSTNAME}:${port}) is the member of the redis cluster(${cluster_name}). Check whether it was created or not."
             attempts=0
             while [[ true ]]
             do
@@ -130,16 +139,10 @@ function check_related_clusters(){
                 lines=$(cat ${nodes_file} | grep -E "(slave)|(master)" | wc -l)
                 if [[ ${lines} -gt 1 ]]
                 then
-                    if [[ $attempts -gt 300 ]]
-                    then
-                        echo "The nodes file(${nodes_file}) contains ${lines} nodes, but cluster status is failed."
-                        return -2
-                    else
-                        echo "The nodes file(${nodes_file}) contains ${lines} nodes, the redis cluster should be created.wait 1 second and check again."
-                        sleep 1
-                        ((attempts++))
-                        continue
-                    fi
+                    echo "The nodes file(${nodes_file}) contains ${lines} nodes, the redis cluster should be created.wait 1 second and check again."
+                    sleep 1
+                    ((attempts++))
+                    continue
                 fi
                 
                 if [[ $index -eq 0 ]]
@@ -155,7 +158,7 @@ function check_related_clusters(){
         fi
         ((index++))
     done
-    echo "The redis server(${NODENAME}) is not belonging to the redis cluster(${cluster_name})."
+    echo "The redis server(${HOSTNAME}) is not belonging to the redis cluster(${cluster_name})."
     return 0
 }
 
@@ -207,7 +210,10 @@ function precheck(){
 declare -a cluster_nodes
 {{- $cluster_size := 0 }}
 {{- $cluster_nodes_str := "" }}
+{{- $podid := "" }}
 {{- $nodeip := "" }}
+{{- $workload_index := 0 }}
+{{- $replicas := $.Values.redis.replicas | default 1 | int }}
 #check the clusters one by one, create it if required
 #find the cluster configuration
 {{- range $i,$redis_cluster := $.Values.redis.redisClusters | default dict }}
@@ -222,9 +228,21 @@ cluster_name={{ $redis_cluster.name }}
         {{- $cluster_size = add $cluster_size 1 }}
         {{- range $k,$v := regexSplit ":" $redis_node -1 }}
             {{- if eq $k 0 }}
-                {{- $nodeip = get (index $.Values.redis.workloads (sub (trimPrefix "redis" $v | int) 1)) "clusterip" }}
-                
-cluster_nodes[{{ add (mul $j 2) $k }}]={{ (print $nodeip) | quote }}
+                {{- if contains "-" $v }}
+                    {{- $replica_index = (index (regexSplit "-" $v -1) 1) | int }}
+                    {{- $workload_index =  sub ((trimPrefix "redis" (index (regexSplit "-" $v -1) 0)) | int ) 1 }}
+                {{- else }}
+                    {{- $replica_index = 0 | int }}
+                    {{- $workload_index =  sub ((trimPrefix "redis" $v) | int ) 1 }}
+                {{- end }}
+                {{- if and (eq $replicas 1) (get (index $.Values.redis.workloads $workload_index) "clusterip") }}
+                    {{ $nodeip = get (index $.Values.redis.workloads $workload_index) "clusterip" }}
+                {{- else }}
+                    {{ $nodeip = index (get (index $.Values.redis.workloads $workload_index) "clusterips") $replica_index }}
+                {{- end }}
+
+                {{- $podid = print $.Release.Name (trimPrefix "redis" (index (regexSplit "-" $v -1) 0)) "-" $replica_index}}
+cluster_nodes[{{ add (mul $j 2) $k }}]={{ print $podid | quote }}
                 {{- $cluster_nodes_str = print $cluster_nodes_str $nodeip }}
             {{- else }}
 cluster_nodes[{{ add (mul $j 2) $k }}]={{ $v }}
@@ -287,10 +305,6 @@ then
             then
                 echo "The redis cluster(${cluster_name}) is ready"
                 break
-            elif [[ $attempts -gt 300 ]]
-            then
-                echo "Failed to create the redis cluster(${cluster_name})"
-                exit 1
             fi
             sleep 1
             ((attempts++))

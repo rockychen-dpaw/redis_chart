@@ -11,7 +11,9 @@
 {{- $save := "\"\"" }}
 {{- $appendonly := "no" }}
 {{- $cluster_enabled :=  false }}
+{{- $clusterip :=  "" }}
 {{- $has_storage := and $.Values.redis.volume $.Values.redis.volume.storage  }}
+{{- $replicas := $.Values.redis.replicas | default 1 | int }}
 
 apiVersion: v1
 kind: ConfigMap
@@ -20,35 +22,50 @@ metadata:
   annotations:
     field.cattle.io/description: redis configurations
 data:
-  {{- $conf_name := "redis" }}
-  {{- $redis_name := $.Release.Name }}
+  {{- $conf_workload_name := "redis" }}
+  {{- $workload_name := $.Release.Name }}
+  {{- $conf_name := $.Release.Name }}
   {{- range $i,$port := untilStep $start_port $end_port 1 }}
-      {{- range $j,$redisIndex := untilStep 1 (add $workloads 1 | int) 1 }}
+      {{- $redisport_conf = (get $.Values.redis (print "redis_" $port ".conf")) | default dict }}
+      {{- range $j,$workload_index := untilStep 1 (add $workloads 1 | int) 1 }}
           {{- if le $workloads 1 }}
-              {{- $redis_name = $.Release.Name }}
-              {{- $conf_name = "redis" }}
+              {{- $workload_name = $.Release.Name }}
+              {{- $conf_workload_name = "redis" }}
           {{- else }}
               {{- if le $workloads 9 }}
-                  {{- $redis_name = print $.Release.Name $redisIndex }}
-                  {{- $conf_name = print "redis" $redisIndex }}
-              {{- else if le $redisIndex 9 }}
-                  {{- $redis_name = print $.Release.Name "0" $redisIndex }}
-                  {{- $conf_name = print  "redis0" $redisIndex }}
+                  {{- $workload_name = print $.Release.Name $workload_index }}
+                  {{- $conf_workload_name = print "redis" $workload_index }}
+              {{- else if le $workload_index 9 }}
+                  {{- $workload_name = print $.Release.Name "0" $workload_index }}
+                  {{- $conf_workload_name = print  "redis0" $workload_index }}
               {{- else }}
-                  {{- $redis_name = print $.Release.Name $redisIndex }}
-                  {{- $conf_name = print "redis" $redisIndex }}
+                  {{- $workload_name = print $.Release.Name $workload_index }}
+                  {{- $conf_workload_name = print "redis" $workload_index }}
               {{- end }}
           {{- end }}
-          {{- $redisport_conf = (get $.Values.redis (print "redis_" $port ".conf")) | default dict }}
-          {{- $redisserver_conf = (get $.Values.redis (print $conf_name "_" $port ".conf")) | default dict }}
+          {{- $redisserver_conf = (get $.Values.redis (print $conf_workload_name "_" $port ".conf")) | default dict }}
           {{- $save = (get $redisserver_conf "save") | default (get $redisport_conf "save") | default (get $redis_conf "save") | default "\"\"" }}
           {{- $appendonly = (get $redisserver_conf "appendonly") | default (get $redisport_conf "appendonly") | default (get $redis_conf "appendonly") | default "no" }}
           {{- $cluster_enabled = and $has_storage (eq ((get $redisserver_conf "cluster-enabled") | default (get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes") }}
-
           {{- if not $save }}
               {{- $save = "\"\"" }}
           {{- end }}
-  {{ $redis_name }}_{{- $port}}.conf: |-
+          {{- range $k,$replica_index := until $replicas }}
+            {{- if eq $replicas 1 }}
+                {{- $conf_name = $conf_workload_name }}
+            {{- else if le $replicas 9 }}
+                {{- $conf_name = print $conf_workload_name "_" $replica_index }}
+            {{- else if le $replica_index 9 }}
+                {{- $conf_name = print $conf_workload_name "_0" $replica_index }}
+            {{- else }}
+                {{- $conf_name = print $conf_workload_name "_" $replica_index }}
+            {{- end }}
+            {{- if and (eq $replicas 1) (get (index $.Values.redis.workloads $j) "clusterip") }}
+                {{ $clusterip = (get (index $.Values.redis.workloads $j) "clusterip")  }}
+            {{- else }}
+                {{ $clusterip = index (get (index $.Values.redis.workloads $j) "clusterips") $replica_index }}
+            {{- end }}
+  {{ $conf_name }}_{{- $port}}.conf: |-
     include /usr/local/redis/conf/redis_common.conf
     port {{ $port}}
           {{- if eq $servers 1 }}
@@ -58,7 +75,7 @@ data:
           {{- end }}
           {{- if $cluster_enabled }}
     cluster-enabled yes
-    cluster-announce-ip {{ get (index $.Values.redis.workloads $j) "clusterip" }}
+    cluster-announce-ip {{ $clusterip }}
     cluster-announce-port {{ $port }}
           {{- else }}
     cluster-enabled no
@@ -109,7 +126,8 @@ data:
     dir /tmp
           {{- end }}
       {{- end}}
+      {{- end}}
   {{- end}}
 binaryData:
   redis_common.conf: >-
-{{ include "redis.redis_common.conf" . | b64enc | indent 4 }}  
+{{ include "redis.redis_common.conf" . | b64enc | indent 4 }}

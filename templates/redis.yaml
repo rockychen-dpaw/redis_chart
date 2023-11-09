@@ -2,9 +2,10 @@
 {{- range $i,$workload := $.Values.redis.workloads }}
     {{- $workloads = add $workloads 1}}
 {{- end }}
-{{- $redis_name := $.Release.Name }}
+{{- $workload_name := $.Release.Name }}
+{{- $conf_workload_name := "redis" }}
 {{- $conf_name := "redis" }}
-{{- $redis_index := 0 }}
+{{- $workload_index := 0 }}
 {{- $node_index := 0 }}
 {{- $node := 0 }}
 {{- $ports := list }}
@@ -23,39 +24,102 @@
 {{- $readinessProbe :=  $.Values.redis.readinessProbe | default dict }}
 {{- $livenessProbe :=  $.Values.redis.livenessProbe | default dict }}
 {{- $has_storage := and $.Values.redis.volume $.Values.redis.volume.storage  }}
+{{- $replicas := $.Values.redis.replicas | default 1 | int }}
+{{- $cluster_groups := dict }}
+{{- $cluster_masters := dict }}
+{{- $nodes_len := 0 }}
+{{- $cluster_groups_len := 0 }}
+{{- $cluster_node := "" }}
+{{- if eq $replicas 1 }}
+{{- range $i,$cluster := $.Values.redis.redisClusters | default list }}
+    {{- $nodes_len = 0 }}
+    {{- range $j,$node := $cluster.servers }}
+        {{- $nodes_len = add $nodes_len 1 }}
+    {{- end }}
+    {{- $cluster_groups_len = div $nodes_len (add $cluster.clusterReplicas 1 ) | int }}
+    #add selector for cluster groups
+    {{- range $j,$group_index := until $cluster_groups_len }}
+        {{- range $k,$replica_index := until (add $cluster.clusterReplicas 1 | int) }}
+            {{- $cluster_node = index $cluster.servers (add $group_index (mul $replica_index $cluster_groups_len)) }}
+            #remove the port 
+            {{- $cluster_node = index (regexSplit ":" $cluster_node -1) 0 }}
+            {{- if contains "-" $cluster_node }}
+                #remove the replica index
+                {{- $cluster_node = index (regexSplit "-" $cluster_node -1) 0 }}
+            {{- end }}
+            #replace 'redis' with Release.Name
+            {{- $cluster_node = print $.Release.Name (trimPrefix "redis" $cluster_node) }}
+            {{- if not (hasKey $cluster_groups $cluster_node) }}
+                {{- set $cluster_groups $cluster_node dict }}
+                {{- set (get $cluster_groups $cluster_node) (print $.Release.Name ".rediscluster." $cluster.name ".group." $group_index )  (print $cluster.name "-group-" $group_index )}}
+            {{- end }}
+        {{- end }}
+    {{- end }}
+    #add selector for cluster master
+    {{- range $j,$node := slice $cluster.servers 0 $cluster_groups_len }}
+        #remove the port 
+        {{- $cluster_node = index (regexSplit ":" $node -1) 0 }}
+        {{- if contains "-" $cluster_node }}
+            #remove the replica index
+            {{- $cluster_node = index (regexSplit "-" $cluster_node -1) 0 }}
+        {{- end }}
+        #replace 'redis' with Release.Name
+        {{- $cluster_node = print $.Release.Name (trimPrefix "redis" $cluster_node) }}
+        {{- if not (hasKey $cluster_masters $cluster_node) }}
+            {{- set $cluster_masters $cluster_node dict }}
+            {{- set (get $cluster_masters $cluster_node) (print $.Release.Name ".rediscluster." $cluster.name ".master" )  (print $cluster.name "-master" )}}
+        {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}
 {{- range $i,$workload := $.Values.redis.workloads }}
-    {{- $redis_index = add $i 1 }}
+    {{- $workload_index = add $i 1 }}
     {{- if le $workloads 1 }}
-        {{- $redis_name = $.Release.Name }}
-        {{- $conf_name = "redis" }}
+        {{- $workload_name = $.Release.Name }}
+        {{- $conf_workload_name = "redis" }}
     {{- else }}
 ---
         {{- if le $workloads 9 }}
-            {{- $redis_name = print $.Release.Name $redis_index }}
-            {{- $conf_name = print "redis" $redis_index }}
-        {{- else if le $redis_index 9 }}
-            {{- $redis_name = print $.Release.Name "0" $redis_index }}
-            {{- $conf_name = print "redis0" $redis_index }}
+            {{- $workload_name = print $.Release.Name $workload_index }}
+            {{- $conf_workload_name = print "redis" $workload_index }}
+        {{- else if le $workload_index 9 }}
+            {{- $workload_name = print $.Release.Name "0" $workload_index }}
+            {{- $conf_workload_name = print "redis0" $workload_index }}
         {{ else }}
-            {{- $redis_name = print $.Release.Name $redis_index }}
-            {{- $conf_name = print "redis" $redis_index }}
+            {{- $workload_name = print $.Release.Name $workload_index }}
+            {{- $conf_workload_name = print "redis" $workload_index }}
         {{- end }}
     {{- end }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ $redis_name }}
+  name: {{ $workload_name }}
 spec:
   selector:
     matchLabels:
-      workload.user.cattle.io/workloadselector: apps.statefulset-{{ $.Release.Namespace}}-{{ $redis_name }}
+      redis.workloadselector: {{ $.Release.Namespace}}-{{ $workload_name }}
+      redis.releaseselector: {{ $.Release.Namespace}}-{{ $.Release.Name }}
+      {{- if hasKey $cluster_groups $workload_name }}
+          {{- range $selector,$value := get $cluster_groups $workload_name }}
+      {{ $selector }}: {{ $value }}
+          {{- end }}
+      {{- end }}
+      {{- if hasKey $cluster_masters $workload_name }}
+          {{- range $selector,$value := get $cluster_masters $workload_name }}
+      {{ $selector }}: {{ $value }}
+          {{- end }}
+      {{- end }}
       {{- range $k,$cluster := get $.Values.redis "redisClusters" | default list }}
           {{- $ports = list }}
           {{- $ports_len = 0 }}
           {{- range $l,$redis_node := $cluster.servers }}
                 {{- $node = index (regexSplit ":" $redis_node -1) 0 }}
                 {{- $port = (index (regexSplit ":" $redis_node -1) 1) | int }}
-                {{- $node_index = (sub (trimPrefix "redis" $node | int) 1) }}
+                {{- if contains "-" $node }}
+                    {{- $node_index = (sub (trimPrefix "redis" (index (regexSplit "-" $node -1) 0) | int) 1) }}
+                {{- else }}
+                    {{- $node_index = (sub (trimPrefix "redis" $node | int) 1) }}
+                {{- end }}
                 {{- if and (eq $i $node_index) (not (has $port $ports)) }}
                     {{- $ports = append $ports $port }}
                     {{- $ports_len = add $ports_len 1 }}
@@ -70,21 +134,36 @@ spec:
           {{- end}}
       {{- end }}
   podManagementPolicy: OrderedReady
-  replicas: 1
+  replicas: {{ $replicas}}
   revisionHistoryLimit: 10
-  serviceName: {{ $redis_name }}
+  serviceName: {{ $workload_name }}
   template:
     metadata:
       creationTimestamp: null
       labels:
-        workload.user.cattle.io/workloadselector: apps.statefulset-{{ $.Release.Namespace}}-{{ $redis_name }}
+        redis.workloadselector: {{ $.Release.Namespace}}-{{ $workload_name }}
+        redis.releaseselector: {{ $.Release.Namespace}}-{{ $.Release.Name }}
+      {{- if hasKey $cluster_groups $workload_name }}
+          {{- range $selector,$value := get $cluster_groups $workload_name }}
+        {{ $selector }}: {{ $value }}
+          {{- end }}
+      {{- end }}
+      {{- if hasKey $cluster_masters $workload_name }}
+          {{- range $selector,$value := get $cluster_masters $workload_name }}
+        {{ $selector }}: {{ $value }}
+          {{- end }}
+      {{- end }}
       {{- range $k,$cluster := get $.Values.redis "redisClusters" | default list }}
           {{- $ports = list }}
           {{- $ports_len = 0 }}
           {{- range $l,$redis_node := $cluster.servers }}
                 {{- $node = index (regexSplit ":" $redis_node -1) 0 }}
                 {{- $port = (index (regexSplit ":" $redis_node -1) 1) | int }}
-                {{- $node_index = (sub (trimPrefix "redis" $node | int) 1) }}
+                {{- if contains "-" $node }}
+                    {{- $node_index = (sub (trimPrefix "redis" (index (regexSplit "-" $node -1) 0) | int) 1) }}
+                {{- else }}
+                    {{- $node_index = (sub (trimPrefix "redis" $node | int) 1) }}
+                {{- end }}
                 {{- if and (eq $i $node_index) (not (has $port $ports)) }}
                     {{- $ports = append $ports $port }}
                     {{- $ports_len = add $ports_len 1 }}
@@ -99,14 +178,59 @@ spec:
           {{- end}}
       {{- end }}
     spec:
+      topologySpreadConstraints:
+      {{- if hasKey $cluster_groups $workload_name }}
+          {{- range $selector,$value := get $cluster_groups $workload_name }}
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        minDomains: 1
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            {{ $selector}}: {{ $value }}
+          {{- end }}
+      {{- end }}
+      {{- if hasKey $cluster_masters $workload_name }}
+          {{- range $selector,$value := get $cluster_masters $workload_name }}
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        minDomains: 1
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            {{ $selector}}: {{ $value }}
+          {{- end }}
+      {{- end }}
+      {{- if gt $replicas 1 }}
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        minDomains: 1
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            redis.workloadselector: {{ $.Release.Namespace}}-{{ $workload_name }}
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        minDomains: 1
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            redis.releaseselector: {{ $.Release.Namespace}}-{{ $.Release.Name }}
+      {{- end }}
       containers:
         - args:
           - /usr/local/redis/bin/start_redis
-          - {{ $workload.clusterip }}
+          {{- if $.Values.redis.envs }}
+          env:
+              {{- range $index,$env := $.Values.redis.envs | default dict }}
+            - name: {{ $env.name }}
+              value: {{ $env.value }}
+              {{- end }}
+          {{- end }}
           workingDir: /usr/local/redis
           image: {{ $.Values.redis.image }}
           imagePullPolicy: Always
-          name: {{ $redis_name }}
+          name: {{ $workload_name }}
           resources: {}
           securityContext:
             allowPrivilegeEscalation: false
@@ -132,26 +256,39 @@ spec:
             name: redis-confs
             subPath: redis_common.conf
           {{- range $i,$port := untilStep $start_port $end_port 1 }}
-              {{- $redisport_conf = (get $.Values.redis (print "redis_" $port ".conf")) | default dict}}
-              {{- $redisserver_conf = (get $.Values.redis (print $conf_name "_" $port ".conf")) | default dict }}
-              {{- $save = (get $redisserver_conf "save") | default (get $redisport_conf "save") | default (get $redis_conf "save") | default "\"\"" }}
-              {{- $appendonly = (get $redisserver_conf "appendonly") | default (get $redisport_conf "appendonly") | default (get $redis_conf "appendonly") | default "no" }}
-              {{- $cluster_enabled = and $has_storage (eq ((get $redisserver_conf "cluster-enabled") | default (get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes") }}
-              {{- if not $save }}
-                  {{- $save = "\"\"" }}
-              {{- end }}
-              {{- if eq $servers 1 }}
+              {{- range $j,$replica_index := until $replicas }}
+                  {{- if eq $replicas 1 }}
+                      {{- $conf_name = $conf_workload_name }}
+                  {{- else if le $replicas 9 }}
+                      {{- $conf_name = print $conf_workload_name "_" $replica_index }}
+                  {{- else if le $replica_index 9 }}
+                      {{- $conf_name = print $conf_workload_name "_0" $replica_index }}
+                  {{- else }}
+                      {{- $conf_name = print $conf_workload_name "_" $replica_index }}
+                  {{- end }}
+                  {{- if eq $replicas 1 }}
+                      {{- if eq $servers 1 }}
           - mountPath: /usr/local/redis/conf/redis.conf
-              {{- else }}
+                      {{- else }}
           - mountPath: /usr/local/redis/{{ $port }}/conf/redis.conf
-              {{- end }}
+                      {{- end }}
             name: redis-confs
-            subPath: {{ $redis_name }}_{{ $port}}.conf
+            subPath: {{ $conf_name }}_{{ $port}}.conf
+                  {{- else }}
+                      {{- if eq $servers 1 }}
+          - mountPath: /usr/local/redis/conf/{{ print $workload_name "-" $replica_index }}/redis.conf
+                      {{- else }}
+          - mountPath: /usr/local/redis/{{ $port }}/conf/{{ print $workload_name "-" $replica_index }}/redis.conf
+                      {{- end }}
+            name: redis-confs
+            subPath: {{ $conf_name }}_{{ $port}}.conf
+                  {{- end }}
+              {{- end }}
           {{- end }}
           {{- if $has_storage  }}
               {{- range $i,$port := untilStep $start_port $end_port 1 }}
                   {{- $redisport_conf = (get $.Values.redis (print "redis_" $port ".conf")) | default dict}}
-                  {{- $redisserver_conf = (get $.Values.redis (print $conf_name "_" $port ".conf")) | default dict }}
+                  {{- $redisserver_conf = (get $.Values.redis (print $conf_workload_name "_" $port ".conf")) | default dict }}
                   {{- $save = (get $redisserver_conf "save") | default (get $redisport_conf "save") | default (get $redis_conf "save") | default "\"\"" }}
                   {{- $appendonly = (get $redisserver_conf "appendonly") | default (get $redisport_conf "appendonly") | default (get $redis_conf "appendonly") | default "no" }}
                   {{- $cluster_enabled = and $has_storage (eq ((get $redisserver_conf "cluster-enabled") | default (get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes") }}
@@ -161,24 +298,40 @@ spec:
                   {{- if or (ne $save "\"\"")  (ne $appendonly  "no") $cluster_enabled }}
                       {{- if eq $servers 1 }}
           - mountPath: /usr/local/redis/data
+            {{- if eq $replicas 1 }}
             name: redis-data
-            subPath: {{ $redis_name }}/data
+            {{- else }}
+            name: {{ $workload_name}}-data
+            {{- end }}
+            subPath: data
                       {{- else }}
           - mountPath: /usr/local/redis/{{ $port }}/data
+            {{- if eq $replicas 1 }}
             name: redis-data
-            subPath: {{ $redis_name }}/{{ $port }}/data
+            {{- else }}
+            name: {{ $workload_name}}-data
+            {{- end }}
+            subPath: {{ $port }}/data
                       {{- end }}
                   {{- end }}
               {{- end }}
               {{- range $i,$port := untilStep $start_port $end_port 1 }}
                   {{- if eq $servers 1 }}
           - mountPath: /usr/local/redis/logs
-            name: redis-logs
-            subPath: {{ $redis_name }}/logs
+            {{- if eq $replicas 1 }}
+            name: redis-data
+            {{- else }}
+            name: {{ $workload_name}}-data
+            {{- end }}
+            subPath: logs
                   {{- else }}
           - mountPath: /usr/local/redis/{{ $port }}/logs
+            {{- if eq $replicas 1 }}
             name: redis-data
-            subPath: {{ $redis_name }}/{{ $port }}/logs
+            {{- else }}
+            name: {{ $workload_name}}-data
+            {{- end }}
+            subPath: {{ $port }}/logs
                   {{- end }}
               {{- end }}
           {{- end }}
@@ -186,8 +339,8 @@ spec:
             failureThreshold: {{ $readinessProbe.failureThreshold | default 3 }}
             successThreshold: {{ $readinessProbe.successThreshold | default 1 }}
             initialDelaySeconds: {{ $readinessProbe.initialDelaySeconds | default 0 }}
-            timeoutSeconds: {{ $readinessProbe.timeoutSeconds | default 1 }}
-            periodSeconds: {{ $readinessProbe.periodSeconds | default 10 }}
+            timeoutSeconds: {{ add ($.Values.redis.minReadySeconds| default $readinessProbe.timeoutSeconds | default 3) 3 }}
+            periodSeconds: {{ add ($.Values.redis.minReadySeconds| default $readinessProbe.timeoutSeconds | default 3) 7 }}
             exec:
               command:
                 - /usr/local/redis/bin/redis_readiness
@@ -195,16 +348,20 @@ spec:
             failureThreshold: {{ $livenessProbe.failureThreshold | default 3 }}
             successThreshold: {{ $livenessProbe.successThreshold | default 1 }}
             initialDelaySeconds: {{ $livenessProbe.initialDelaySeconds | default 0 }}
-            timeoutSeconds: {{ $livenessProbe.timeoutSeconds | default 1 }}
+            timeoutSeconds: {{ $livenessProbe.timeoutSeconds | default 3 }}
             periodSeconds: {{ $livenessProbe.periodSeconds | default 10 }}
             exec:
               command:
-                - /usr/local/redis/bin/redis_readiness
+                - /usr/local/redis/bin/redis_liveness
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       schedulerName: default-scheduler
       securityContext: {}
       terminationGracePeriodSeconds: 30
+      {{- if $workload.affinity }}
+      affinity:
+{{ $workload.affinity | toYaml | indent 8 }}
+      {{- end }}
       volumes:
       - configMap:
           defaultMode: 365
@@ -215,13 +372,30 @@ spec:
           name: {{ $.Release.Name }}-confs
         name: redis-confs
       {{- if $has_storage  }}
+          {{- if eq $replicas 1 }}
       - name: redis-data
         persistentVolumeClaim:
-          claimName: {{ $.Release.Name}}-data
+          claimName: {{ $workload_name }}-data
           type: persistentvolumeclaim
-      {{- end }}
+          {{- else }}
       securityContext:
         fsGroup: 999
+  volumeClaimTemplates:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: {{ $workload_name }}-data
+        namespace: {{ $.Release.Namespace }}
+      spec:
+        accessModes:
+          - {{ $.Values.redis.volume.accessMode | default "ReadWriteOnce" }}
+        resources:
+          requests:
+            storage: {{ $.Values.redis.volume.storage}}
+        storageClassName: {{ $.Values.redis.volume.storageClassName | default "managed-csi-retain" }}
+        volumeMode: {{ $.Values.redis.volume.volumeMode | default "Filesystem" }}
+          {{- end }}
+      {{- end }}
   updateStrategy:
     rollingUpdate:
       partition: 0

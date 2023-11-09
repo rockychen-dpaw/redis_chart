@@ -1,0 +1,47 @@
+{{- $replicas := $.Values.redis.replicas | default 1 | int }}
+{{- if gt $replicas 1 }}
+{{- $workloads := 0 }}
+{{- range $i,$workload := $.Values.redis.workloads }}
+    {{- $workloads = add $workloads 1}}
+{{- end }}
+{{- $workload_name := $.Release.Name }}
+{{- $workload_index := 0 }}
+{{- range $i,$workload := $.Values.redis.workloads }}
+    {{- $workload_index = add $i 1 }}
+    {{- if le $workloads 1 }}
+        {{- $workload_name = $.Release.Name }}
+    {{- else }}
+        {{- if le $workloads 9 }}
+            {{- $workload_name = print $.Release.Name $workload_index }}
+        {{- else if le $workload_index 9 }}
+            {{- $workload_name = print $.Release.Name "0" $workload_index }}
+        {{ else }}
+            {{- $workload_name = print $.Release.Name $workload_index }}
+        {{- end }}
+    {{- end }}
+    {{- if gt $workloads 1 }}
+---
+    {{- end}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $workload_name}}
+spec:
+  clusterIP: None
+  clusterIPs:
+    - None
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+    - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+    - name: default
+      port: 42
+      protocol: TCP
+      targetPort: 42
+  selector:
+    redis.workloadselector: {{ $.Release.Namespace }}-{{ $workload_name }}
+  sessionAffinity: None
+  type: ClusterIP
+{{- end }}
+{{- end }}

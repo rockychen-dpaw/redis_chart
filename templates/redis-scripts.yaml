@@ -9,3 +9,5 @@ binaryData:
 {{ include "redis.start_redis" . | b64enc | indent 4 }}
   redis_readiness: >- 
 {{ include "redis.redis_readiness" . | b64enc | indent 4 }}
+  redis_liveness: >- 
+{{ include "redis.redis_liveness" . | b64enc | indent 4 }}

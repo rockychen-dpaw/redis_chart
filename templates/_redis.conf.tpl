@@ -348,7 +348,7 @@ daemonize yes
 # notice (moderately verbose, what you want in production probably)
 # warning (only very important / critical messages are logged)
 # nothing (nothing is logged)
-loglevel notice
+loglevel warning
 
 # Specify the log file name. Also the empty string can be used to force
 # Redis to log on the standard output. Note that if you use standard
@@ -368,7 +368,7 @@ loglevel notice
 # To disable the built in crash log, which will possibly produce cleaner core
 # dumps when they are needed, uncomment the following:
 #
-# crash-log-enabled no
+crash-log-enabled no
 
 # To disable the fast memory check that's run as part of the crash log, which
 # will possibly let redis terminate sooner, uncomment the following:

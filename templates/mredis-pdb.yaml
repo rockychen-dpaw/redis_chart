@@ -1,0 +1,35 @@
+{{- $replicas := $.Values.redis.replicas | default 1 | int }}
+{{- if gt $replicas 1 }}
+{{- $workloads := 0 }}
+{{- $workload_index := 0 }}
+{{- $workload_name := "" }}
+{{- range $i,$workload := $.Values.redis.workloads }}
+    {{- $workloads = add $workloads 1 }}
+{{- end }}
+
+{{- range $i,$workload := $.Values.redis.workloads }}
+    {{- $workload_index = add $i 1 }}
+    {{- if le $workloads 1 }}
+        {{- $workload_name = $.Release.Name }}
+        {{- $conf_workload_name = "redis" }}
+    {{- else }}
+---
+        {{- if le $workloads 9 }}
+            {{- $workload_name = print $.Release.Name $workload_index }}
+        {{- else if le $workload_index 9 }}
+            {{- $workload_name = print $.Release.Name "0" $workload_index }}
+        {{ else }}
+            {{- $workload_name = print $.Release.Name $workload_index }}
+        {{- end }}
+    {{- end }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $workload_name}}
+spec:
+  minAvailable: {{ sub $replicas 1 }}
+  selector:
+    matchLabels:
+      redis.workloadselector: {{ $.Release.Namespace}}-{{ $workload_name }}
+{{- end }}
+{{- end }}

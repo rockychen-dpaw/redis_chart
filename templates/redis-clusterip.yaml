@@ -2,36 +2,59 @@
 {{- range $i,$workload := $.Values.redis.workloads }}
     {{- $workloads = add $workloads 1}}
 {{- end }}
+{{- $replicas := $.Values.redis.replicas | default 1 | int }}
+{{- $redisservers := mul $workloads $replicas }}
 {{- $start_port := $.Values.redis.port | default 6379 |int }}
 {{- $servers := $.Values.redis.servers | default 1 | int }}
 {{- $end_port := add $start_port $servers | int  }}
 {{- $redis_name := $.Release.Name }}
-{{- $redis_index := 0 }}
-{{- $node_index := 0 }}
+{{- $workload_name := $.Release.Name }}
+{{- $workload_index := 0 }}
+{{- $node_workload_index := 0 }}
+{{- $node_replica_index := 0 }}
 {{- $node := "" }}
 {{- $cluster_node := false }}
+{{- $clusterip := "" }}
 {{- range $i,$workload := $.Values.redis.workloads }}
-    {{- $redis_index = add $i 1 }}
+    {{- $workload_index = add $i 1 }}
     {{- if le $workloads 1 }}
-        {{- $redis_name = $.Release.Name }}
+        {{- $workload_name = $.Release.Name }}
     {{- else }}
----
         {{- if le $workloads 9 }}
-            {{- $redis_name = print $.Release.Name $redis_index }}
-        {{- else if le $redis_index 9 }}
-            {{- $redis_name = print $.Release.Name "0" $redis_index }}
+            {{- $workload_name = print $.Release.Name $workload_index }}
+        {{- else if le $workload_index 9 }}
+            {{- $workload_name = print $.Release.Name "0" $workload_index }}
         {{ else }}
-            {{- $redis_name = print $.Release.Name $redis_index }}
+            {{- $workload_name = print $.Release.Name $workload_index }}
         {{- end }}
     {{- end }}
+    {{- range $replica_index,$k := until $replicas }}
+        {{- if eq $replicas 1 }}
+            {{- $redis_name = $workload_name }}
+        {{- else if le $replicas 9 }}
+            {{- $redis_name = print $workload_name "-" $replica_index }}
+        {{- else if le $replica_index 9 }}
+            {{- $redis_name = print $workload_name "_0" $replica_index }}
+        {{- else }}
+            {{- $redis_name = print $workload_name "_" $replica_index }}
+        {{- end }}
+
+        {{- if gt $redisservers 1 }}
+---
+        {{- end}}
+        {{- if and (eq $replicas 1) ($workload.clusterip) }}
+            {{ $clusterip = $workload.clusterip }}
+        {{- else }}
+            {{ $clusterip = index $workload.clusterips $replica_index }}
+        {{- end }}
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ $redis_name}}
 spec:
-  clusterIP: {{ get $workload "clusterip" }}
+  clusterIP: {{ $clusterip }}
   clusterIPs:
-    - {{ get $workload "clusterip" }}
+    - {{ $clusterip }}
   internalTrafficPolicy: Cluster
   ipFamilies:
     - IPv4
@@ -46,8 +69,14 @@ spec:
           {{- $cluster_node = false }}
           {{- range $l,$redis_node := $cluster.servers }}
                 {{- $node = index (regexSplit ":" $redis_node -1) 0 }}
-                {{- $node_index = (sub (trimPrefix "redis" $node | int) 1) }}
-                {{- if and (eq $i $node_index) (hasSuffix (print ":" $port) $redis_node) }}
+                {{- if contains "-" $node }}
+                    {{- $node_replica_index = (index (regexSplit "-" $node -1) 1) | int }}
+                    {{- $node_workload_index = (trimPrefix "redis" (index (regexSplit "-" $node -1) 0)) | int }}
+                {{- else }}
+                    {{- $node_replica_index = 0 | int }}
+                    {{- $node_workload_index = (trimPrefix "redis" $node) | int }}
+                {{- end }}
+                {{- if and (eq $workload_index $node_workload_index) (eq $replica_index $node_replica_index) (hasSuffix (print ":" $port) $redis_node) }}
                     {{- $cluster_node = true }}
                 {{- end }}
           {{- end }}
@@ -60,7 +89,8 @@ spec:
       {{- end }}
     {{- end }}
   selector:
-    workload.user.cattle.io/workloadselector: apps.statefulset-{{ $.Release.Namespace }}-{{ $redis_name}}
+    statefulset.kubernetes.io/pod-name: {{ print $workload_name "-" $replica_index }}
   sessionAffinity: None
   type: ClusterIP
+    {{- end }}
 {{- end }}
