@@ -1,69 +1,35 @@
 {{- $replicas := $.Values.redis.replicas | default 1 | int }}
-{{- if eq $replicas 1 }}
-{{- $cluster_groups := dict }}
-{{- $cluster_masters := dict }}
-{{- $nodes_len := 0 }}
-{{- $cluster_groups_len := 0 }}
-{{- $cluster_node := "" }}
-{{- $cluster_replicas := 0}}
-{{- $counter := 0 }}
-{{- $name := 0 }}
-{{- range $i,$cluster := $.Values.redis.redisClusters | default dict }}
-    {{- $nodes_len = 0 }}
-    {{- range $j,$node := $cluster.servers }}
-        {{- $nodes_len = add $nodes_len 1 }}
-    {{- end }}
-    {{- $cluster_groups_len = div $nodes_len (add $cluster.clusterReplicas 1 ) | int }}
-    {{- $cluster_replicas = $cluster.clusterReplicas }}
-    #add selector for cluster groups
-    {{- range $j,$group_index := until $cluster_groups_len }}
-        {{- $name = print $.Release.Name "-" $cluster.name "-group" $group_index}}
-        {{- if not (hasKey $cluster_groups $name) }}
-            {{- set $cluster_groups $name dict }}
-            {{- set (get $cluster_groups $name) (print $.Release.Name ".rediscluster." $cluster.name ".group." $group_index )  (print $cluster.name "-group-" $group_index )}}
-            {{- $counter = add $counter 1 }}
+{{- if gt $replicas 1 }}
+{{- $workloads := 0 }}
+{{- $workload_index := 0 }}
+{{- $workload_name := "" }}
+{{- range $i,$workload := $.Values.redis.workloads }}
+    {{- $workloads = add $workloads 1 }}
+{{- end }}
+
+{{- range $i,$workload := $.Values.redis.workloads }}
+    {{- $workload_index = add $i 1 }}
+    {{- if le $workloads 1 }}
+        {{- $workload_name = $.Release.Name }}
+        {{- $conf_workload_name = "redis" }}
+    {{- else }}
+---
+        {{- if le $workloads 9 }}
+            {{- $workload_name = print $.Release.Name $workload_index }}
+        {{- else if le $workload_index 9 }}
+            {{- $workload_name = print $.Release.Name "0" $workload_index }}
+        {{ else }}
+            {{- $workload_name = print $.Release.Name $workload_index }}
         {{- end }}
     {{- end }}
-    #add selector for cluster master
-    {{- $name = print $.Release.Name "-" $cluster.name "-masters"}}
-    {{- if not (hasKey $cluster_masters $name) }}
-        {{- set $cluster_masters $name dict }}
-        {{- set (get $cluster_masters $name) (print $.Release.Name ".rediscluster." $cluster.name ".master" )  (print $cluster.name "-master" )}}
-        {{- $counter = add $counter 1 }}
-    {{- end }}
-{{- end }}
-{{- if gt $counter 0 }}
-{{- range $pdb_name,$groups := $cluster_groups }}
-    {{- range $selector,$value := $groups }}
-        {{- if gt $counter 1 }}
----
-        {{- end}}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ $pdb_name}}
+  name: {{ $workload_name}}
 spec:
-  minAvailable: {{ $cluster_replicas }}
+  minAvailable: {{ sub $replicas 1 }}
   selector:
     matchLabels:
-      {{ $selector }}: {{ $value }}
-    {{- end }}
-{{- end }}
-{{- range $pdb_name,$groups := $cluster_masters }}
-    {{- range $selector,$value := $groups }}
-        {{- if gt $counter 1 }}
----
-        {{- end}}
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: {{ $pdb_name}}
-spec:
-  minAvailable: {{ sub $cluster_groups_len 1 }}
-  selector:
-    matchLabels:
-      {{ $selector }}: {{ $value }}
-    {{- end }}
-{{- end }}
+      redis.workloadselector: {{ $.Release.Namespace}}-{{ $workload_name }}
 {{- end }}
 {{- end }}

@@ -46,9 +46,9 @@ spec:
       targetPort: {{ $port }}
   selector:
         {{- if eq $cluster.len 1 }}
-    workload.user.cattle.io/{{ $.Release.Name }}.rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name }}-rediscluster-{{ $cluster.name }}
+    {{ $.Release.Name }}.rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name }}-rediscluster-{{ $cluster.name }}
         {{- else }}
-    workload.user.cattle.io/{{ $.Release.Name }}.rediscluster.{{ $cluster.name }}.{{ $port }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name }}-rediscluster-{{ $cluster.name }}-{{ $port }}
+    {{ $.Release.Name }}.rediscluster.{{ $cluster.name }}.{{ $port }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name }}-rediscluster-{{ $cluster.name }}-{{ $port }}
         {{- end }}
   sessionAffinity: None
   type: ClusterIP

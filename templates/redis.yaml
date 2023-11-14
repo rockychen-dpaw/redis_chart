@@ -25,52 +25,40 @@
 {{- $livenessProbe :=  $.Values.redis.livenessProbe | default dict }}
 {{- $has_storage := and $.Values.redis.volume $.Values.redis.volume.storage  }}
 {{- $replicas := $.Values.redis.replicas | default 1 | int }}
-{{- $cluster_groups := dict }}
-{{- $cluster_masters := dict }}
-{{- $nodes_len := 0 }}
-{{- $cluster_groups_len := 0 }}
-{{- $cluster_node := "" }}
-{{- if eq $replicas 1 }}
+{{- $cluster_masters_list := list }}
+{{- $cluster_masters_list_len := 0 }}
 {{- range $i,$cluster := $.Values.redis.redisClusters | default list }}
-    {{- $nodes_len = 0 }}
+    {{- $nodes_len := 0 }}
     {{- range $j,$node := $cluster.servers }}
         {{- $nodes_len = add $nodes_len 1 }}
     {{- end }}
-    {{- $cluster_groups_len = div $nodes_len (add $cluster.clusterReplicas 1 ) | int }}
+    {{- $cluster_groups_len := div $nodes_len (add ($cluster.clusterReplicas | default 1 ) 1 ) | int }}
+    {{- $cluster_masters := list }}
     #add selector for cluster groups
-    {{- range $j,$group_index := until $cluster_groups_len }}
-        {{- range $k,$replica_index := until (add $cluster.clusterReplicas 1 | int) }}
-            {{- $cluster_node = index $cluster.servers (add $group_index (mul $replica_index $cluster_groups_len)) }}
-            #remove the port 
-            {{- $cluster_node = index (regexSplit ":" $cluster_node -1) 0 }}
-            {{- if contains "-" $cluster_node }}
-                #remove the replica index
-                {{- $cluster_node = index (regexSplit "-" $cluster_node -1) 0 }}
-            {{- end }}
-            #replace 'redis' with Release.Name
-            {{- $cluster_node = print $.Release.Name (trimPrefix "redis" $cluster_node) }}
-            {{- if not (hasKey $cluster_groups $cluster_node) }}
-                {{- set $cluster_groups $cluster_node dict }}
-                {{- set (get $cluster_groups $cluster_node) (print $.Release.Name ".rediscluster." $cluster.name ".group." $group_index )  (print $cluster.name "-group-" $group_index )}}
-            {{- end }}
-        {{- end }}
-    {{- end }}
-    #add selector for cluster master
-    {{- range $j,$node := slice $cluster.servers 0 $cluster_groups_len }}
+    {{- range $j,$master_index := until $cluster_groups_len }}
+        {{- $cluster_node := index $cluster.servers $master_index }}
         #remove the port 
-        {{- $cluster_node = index (regexSplit ":" $node -1) 0 }}
-        {{- if contains "-" $cluster_node }}
-            #remove the replica index
-            {{- $cluster_node = index (regexSplit "-" $cluster_node -1) 0 }}
-        {{- end }}
+        {{- $cluster_node = index (regexSplit ":" $cluster_node -1) 0 }}
         #replace 'redis' with Release.Name
         {{- $cluster_node = print $.Release.Name (trimPrefix "redis" $cluster_node) }}
-        {{- if not (hasKey $cluster_masters $cluster_node) }}
-            {{- set $cluster_masters $cluster_node dict }}
-            {{- set (get $cluster_masters $cluster_node) (print $.Release.Name ".rediscluster." $cluster.name ".master" )  (print $cluster.name "-master" )}}
+        {{- $cluster_masters = append $cluster_masters $cluster_node}}
+    {{- end }}
+    {{- $masters_exists := false }}
+    {{- range $j,$masters := $cluster_masters_list }}
+        {{- $exists := true }}
+        {{- range $k,$node := $cluster_masters }}
+            {{- if not (has $node $masters) }}
+                {{- $exists = false}}
+            {{- end }}
+        {{- end }}
+        {{- if $exists }}
+            {{- $masters_exists = true}}
         {{- end }}
     {{- end }}
-{{- end }}
+    {{- if not $masters_exists }}
+        {{- $cluster_masters_list = append $cluster_masters_list $cluster_masters }}
+        {{- $cluster_masters_list_len = add $cluster_masters_list_len 1 }}
+    {{- end }}
 {{- end }}
 {{- range $i,$workload := $.Values.redis.workloads }}
     {{- $workload_index = add $i 1 }}
@@ -99,16 +87,6 @@ spec:
     matchLabels:
       redis.workloadselector: {{ $.Release.Namespace}}-{{ $workload_name }}
       redis.releaseselector: {{ $.Release.Namespace}}-{{ $.Release.Name }}
-      {{- if hasKey $cluster_groups $workload_name }}
-          {{- range $selector,$value := get $cluster_groups $workload_name }}
-      {{ $selector }}: {{ $value }}
-          {{- end }}
-      {{- end }}
-      {{- if hasKey $cluster_masters $workload_name }}
-          {{- range $selector,$value := get $cluster_masters $workload_name }}
-      {{ $selector }}: {{ $value }}
-          {{- end }}
-      {{- end }}
       {{- range $k,$cluster := get $.Values.redis "redisClusters" | default list }}
           {{- $ports = list }}
           {{- $ports_len = 0 }}
@@ -127,9 +105,9 @@ spec:
           {{- end }}
           {{- range $l,$p := $ports  }}
               {{- if eq $ports_len 1 }}
-      workload.user.cattle.io/{{ $.Release.Name}}.rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name}}-rediscluster-{{ $cluster.name }}
+      {{ $.Release.Name}}.rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name}}-rediscluster-{{ $cluster.name }}
               {{- else }}
-      workload.user.cattle.io/{{ $.Release.Name}}.rediscluster.{{ $cluster.name }}.{{ $p }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name}}-rediscluster-{{ $cluster.name }}-{{ $p }}
+      {{ $.Release.Name}}.rediscluster.{{ $cluster.name }}.{{ $p }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name}}-rediscluster-{{ $cluster.name }}-{{ $p }}
               {{- end }}
           {{- end}}
       {{- end }}
@@ -143,16 +121,6 @@ spec:
       labels:
         redis.workloadselector: {{ $.Release.Namespace}}-{{ $workload_name }}
         redis.releaseselector: {{ $.Release.Namespace}}-{{ $.Release.Name }}
-      {{- if hasKey $cluster_groups $workload_name }}
-          {{- range $selector,$value := get $cluster_groups $workload_name }}
-        {{ $selector }}: {{ $value }}
-          {{- end }}
-      {{- end }}
-      {{- if hasKey $cluster_masters $workload_name }}
-          {{- range $selector,$value := get $cluster_masters $workload_name }}
-        {{ $selector }}: {{ $value }}
-          {{- end }}
-      {{- end }}
       {{- range $k,$cluster := get $.Values.redis "redisClusters" | default list }}
           {{- $ports = list }}
           {{- $ports_len = 0 }}
@@ -171,51 +139,40 @@ spec:
           {{- end }}
           {{- range $l,$p := $ports  }}
               {{- if eq $ports_len 1 }}
-        workload.user.cattle.io/{{ $.Release.Name}}.rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name}}-rediscluster-{{ $cluster.name }}
+        {{ $.Release.Name}}.rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name}}-rediscluster-{{ $cluster.name }}
               {{- else }}
-        workload.user.cattle.io/{{ $.Release.Name}}.rediscluster.{{ $cluster.name }}.{{ $p }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name}}-rediscluster-{{ $cluster.name }}-{{ $p }}
+        {{ $.Release.Name}}.rediscluster.{{ $cluster.name }}.{{ $p }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name}}-rediscluster-{{ $cluster.name }}-{{ $p }}
               {{- end }}
           {{- end}}
       {{- end }}
     spec:
+      {{- if and (gt $replicas 1 ) $.Values.redis.topologySpreadConstraints }}
       topologySpreadConstraints:
-      {{- if hasKey $cluster_groups $workload_name }}
-          {{- range $selector,$value := get $cluster_groups $workload_name }}
-      - maxSkew: 1
-        topologyKey: kubernetes.io/hostname
-        minDomains: 1
-        whenUnsatisfiable: DoNotSchedule
-        labelSelector:
-          matchLabels:
-            {{ $selector}}: {{ $value }}
-          {{- end }}
-      {{- end }}
-      {{- if hasKey $cluster_masters $workload_name }}
-          {{- range $selector,$value := get $cluster_masters $workload_name }}
-      - maxSkew: 1
-        topologyKey: kubernetes.io/hostname
-        minDomains: 1
-        whenUnsatisfiable: ScheduleAnyway
-        labelSelector:
-          matchLabels:
-            {{ $selector}}: {{ $value }}
-          {{- end }}
-      {{- end }}
-      {{- if gt $replicas 1 }}
-      - maxSkew: 1
-        topologyKey: kubernetes.io/hostname
-        minDomains: 1
-        whenUnsatisfiable: DoNotSchedule
+          {{- range $i,$constraint := $.Values.redis.topologySpreadConstraints }}
+              {{- if eq $i 0 }}
+      #the master and its slaves must be running on different nodes
+      - maxSkew: {{ $constraint.maxSkew | default 1 }}
+        topologyKey: {{ $constraint.topologyKey }}
+        minDomains: {{ $constraint.minDomains | default 1 }}
+        whenUnsatisfiable: {{ $constraint.whenUnsatisfiable }}
         labelSelector:
           matchLabels:
             redis.workloadselector: {{ $.Release.Namespace}}-{{ $workload_name }}
-      - maxSkew: 1
-        topologyKey: kubernetes.io/hostname
-        minDomains: 1
-        whenUnsatisfiable: ScheduleAnyway
+              {{- else if le $i $cluster_masters_list_len }}
+      - maxSkew: {{ $constraint.maxSkew | default 1 }}
+        topologyKey: {{ $constraint.topologyKey }}
+        minDomains: {{ $constraint.minDomains | default 1 }}
+        whenUnsatisfiable: {{ $constraint.whenUnsatisfiable }}
         labelSelector:
-          matchLabels:
-            redis.releaseselector: {{ $.Release.Namespace}}-{{ $.Release.Name }}
+          matchExpressions:
+            - key: statefulset.kubernetes.io/pod-name
+              operator: In
+              values:
+                {{- range $k,$node := index $cluster_masters_list (sub $i 1)}}
+                - {{ $node }}
+                {{- end }}
+              {{- end }}
+          {{- end }}
       {{- end }}
       containers:
         - args:
@@ -335,6 +292,7 @@ spec:
                   {{- end }}
               {{- end }}
           {{- end }}
+          {{- if not ($.Values.redis.reset | default false) }}
           readinessProbe:
             failureThreshold: {{ $readinessProbe.failureThreshold | default 3 }}
             successThreshold: {{ $readinessProbe.successThreshold | default 1 }}
@@ -353,6 +311,7 @@ spec:
             exec:
               command:
                 - /usr/local/redis/bin/redis_liveness
+          {{- end }}
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       schedulerName: default-scheduler
