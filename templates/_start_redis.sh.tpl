@@ -243,6 +243,12 @@ do
             if [[ $status -eq 0 ]] && [[ $res != *"Connection refused"* ]] && [[ "${res}" = "PONG" ]]
             then
                 echo "The redis server(127.0.0.1:${PORT}) is ready to use."
+                if [[ $SERVERS -eq 1 ]]
+                then
+                    touch $REDIS_DIR/data/redis_started_at_$(date +"%Y%m%d-%H%M%S")
+                else
+                    touch $REDIS_DIR/${PORT}/data/redis_started_at_$(date +"%Y%m%d-%H%M%S")
+                fi
                 break
             fi
             sleep 1

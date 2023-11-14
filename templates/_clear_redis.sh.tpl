@@ -12,9 +12,9 @@ while [[ $counter -le $SERVERS ]]
 do
 
     {{- if eq $servers 1 }}
-    rm -rf /usr/local/redis/data/*
+    rm -rf ${REDIS_DIR}/data/*
     {{- else }}
-    rm -rf /usr/local/redis/${PORT}/data/*
+    rm -rf ${REDIS_DIR}/${PORT}/data/*
     {{- end }}
 
     ((counter++))
