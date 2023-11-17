@@ -89,6 +89,7 @@ declare -a {{ $redis_cluster.name}}_nodes
 {{- end }}
 
 declare -A PASSWORDS
+declare -A CLEAR_IF_FIX_FAILED
 {{- $replicas := $.Values.redis.replicas | default 1 | int }}
 {{- $workload_index := 0 }}
 {{- $replica_index := 0 }}
@@ -100,6 +101,11 @@ declare -A PASSWORDS
 {{- range $i,$port := untilStep $start_port $end_port 1 }}
     {{- $redisport_conf = (get $.Values.redis (print "redis_" $port ".conf")) | default dict }}
 PASSWORDS[{{ $port | quote }}]={{ (get $redisport_conf "requirepass") | default (get $redis_conf "requirepass") | default "" | quote }}
+{{ if (get $redisport_conf "_clear_data_if_fix_failed") | default (get $redis_conf "_clear_data_if_fix_failed") | default false }}
+CLEAR_IF_FIX_FAILED[{{ $port | quote }}]=1
+{{- else }}
+CLEAR_IF_FIX_FAILED[{{ $port | quote }}]=0
+{{- end }}
 {{- end }}
 
 #check whether all servers are up
@@ -115,121 +121,183 @@ do
     status=$?
     if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ "$res" != "PONG" ]]
     then
-      #redis server is not started
-      #switch the redis master if this server is belong to a redis cluster which is persistent disabled, and also the corresponding redis server has not taken over yet.
-      switch_required=0
-      {{- range $i,$redis_cluster := $.Values.redis.redisClusters | default dict }}
-      cluster_name={{ print "${" $redis_cluster.name "_name}" }}
-      cluster_nodes={{ print "( \"${" $redis_cluster.name "_nodes[@]}\" )" }}  
-      cluster_size={{ print "${" $redis_cluster.name "_size}" }}
-      cluster_slaves={{ print "${" $redis_cluster.name "_slaves}" }}
-      cluster_groups={{ print "${" $redis_cluster.name "_groups}" }}
-      cluster_persistent={{ print "${" $redis_cluster.name "_persistent}" }}
+        #redis server is not started
+        #switch the redis master if this server is belong to a redis cluster which is persistent disabled, and also the corresponding redis server has not taken over yet.
+        switch_required=0
+        {{- range $i,$redis_cluster := $.Values.redis.redisClusters | default dict }}
+        cluster_name={{ print "${" $redis_cluster.name "_name}" }}
+        cluster_nodes={{ print "( \"${" $redis_cluster.name "_nodes[@]}\" )" }}  
+        cluster_size={{ print "${" $redis_cluster.name "_size}" }}
+        cluster_slaves={{ print "${" $redis_cluster.name "_slaves}" }}
+        cluster_groups={{ print "${" $redis_cluster.name "_groups}" }}
+        cluster_persistent={{ print "${" $redis_cluster.name "_persistent}" }}
 
-      if [[ ${cluster_persistent} -eq 0 ]]
-      then
-          #cluster doesn't support persistent. so master switch is required 
-          index=0
-          while [[ $index -lt ${cluster_size} ]]
-          do
-              server=${cluster_nodes[$(( $index * 3 ))]}
-              port=${cluster_nodes[$(( $index * 3 + 2 ))]}
-              if [[ "${server}" == "${HOSTNAME}" ]] && [[ ${port} -eq ${PORT} ]]
-              then
-                  echo "The redis server(127.0.0.1:${PORT}) is offline and belonging to the redis cluster(${cluster_name}), check whether the related slave server should be switched to master node"
-                  #this redis server is blonging to this cluster
-                  j=1
-                  new_master_index=-1
-                  while [[ $j -le ${cluster_slaves} ]]
-                  do
-                      other_index=$((($index + $j * $cluster_groups) % ${cluster_size}))
-                      other_server=${cluster_nodes[$(( $other_index * 3 + 1 ))]}
-                      other_port=${cluster_nodes[$(( $other_index * 3 + 2 ))]}
-                      echo "Check whether the server(${other_server}:${other_port}) is master."
-                      if [[ "${PASSWORDS["${other_port}"]}" == "" ]]
-                      then
-                          res=$(redis-cli -h ${other_server} -c -p ${other_port} cluster nodes 2>&1)
-                      else
-                          res=$(echo ${PASSWORDS["${other_port}"]} | redis-cli --askpass -c -h ${other_server} -p ${other_port} cluster nodes 2>&1)
-                      fi
-                      status=$?
-                      if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ $res = *ERR* ]]
-                      then 
-                          echo "The server(${other_server}:${other_port}) is offline."
-                      else
-                          nodes=$(echo -e "$res" | wc -l )
-                          if [[ $nodes -lt 2 ]]
-                          then
-                              echo "The server(${other_server}:${other_port}) does not join the redis cluster(${cluster_name}) ."
-                          else
-                              is_master=$(echo -e "$res" | grep "myself" | grep "master" | wc -l )
-                              if [[ ${is_master} -eq 1 ]]
-                              then
-                                  echo "The server(${other_server}:${other_port}) is master, no need to switch."
-                                  new_master_index=-1
-                                  break
-                              else
-                                  new_master_index=${other_index}
-                              fi
-                          fi
-                      fi
-                      ((j++))
-                  done
-                  if [[ ${new_master_index} -ge 0 ]]
-                  then
-                      #switch the master server
-                      new_master_server=${cluster_nodes[$(( $new_master_index * 3 + 1 ))]}
-                      new_master_port=${cluster_nodes[$(( $new_master_index * 3 + 2 ))]}
-                      echo "Try to switch the server(${new_master_server}:${new_master_port}) to master."
-                      if [[ "${PASSWORDS["${new_master_port}"]}" == "" ]]
-                      then
-                          res=$(redis-cli -h ${new_master_server} -p ${new_master_port} cluster failover takeover 2>&1)
-                      else
-                          res=$(echo ${PASSWORDS["${new_master_port}"]} | redis-cli --askpass -h ${new_master_server} -p ${new_master_port} cluster failover takeover 2>&1)
-                      fi
-                      status=$?
-                      if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ $res = *ERR* ]]
-                      then 
-                          echo "Failed to switch the server(${new_master_server}:${new_master_port}) to master node."
-                          exit 1
-                      fi
-                      echo "Succeed to switch the server(${new_master_server}:${new_master_port}) to master node."
-                  fi
-                  break
-              fi
-              ((index++))
-          done
-      else
-          echo "The redis cluster($cluster_name) supports persistent, no need to switch the slave node to master node manually"
-      fi
-      {{- end}}
+        if [[ ${cluster_persistent} -eq 0 ]]
+        then
+            #cluster doesn't support persistent. so master switch is required 
+            index=0
+            while [[ $index -lt ${cluster_size} ]]
+            do
+                server=${cluster_nodes[$(( $index * 3 ))]}
+                port=${cluster_nodes[$(( $index * 3 + 2 ))]}
+                if [[ "${server}" == "${HOSTNAME}" ]] && [[ ${port} -eq ${PORT} ]]
+                then
+                    echo "The redis server(127.0.0.1:${PORT}) is offline and belonging to the redis cluster(${cluster_name}), check whether the related slave server should be switched to master node"
+                    #this redis server is blonging to this cluster
+                    j=1
+                    new_master_index=-1
+                    while [[ $j -le ${cluster_slaves} ]]
+                    do
+                        other_index=$((($index + $j * $cluster_groups) % ${cluster_size}))
+                        other_server=${cluster_nodes[$(( $other_index * 3 + 1 ))]}
+                        other_port=${cluster_nodes[$(( $other_index * 3 + 2 ))]}
+                        echo "Check whether the server(${other_server}:${other_port}) is master."
+                        if [[ "${PASSWORDS["${other_port}"]}" == "" ]]
+                        then
+                            res=$(redis-cli -h ${other_server} -c -p ${other_port} cluster nodes 2>&1)
+                        else
+                            res=$(echo ${PASSWORDS["${other_port}"]} | redis-cli --askpass -c -h ${other_server} -p ${other_port} cluster nodes 2>&1)
+                        fi
+                        status=$?
+                        if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ $res = *ERR* ]]
+                        then 
+                            echo "The server(${other_server}:${other_port}) is offline."
+                        else
+                            nodes=$(echo -e "$res" | wc -l )
+                            if [[ $nodes -lt 2 ]]
+                            then
+                                echo "The server(${other_server}:${other_port}) does not join the redis cluster(${cluster_name}) ."
+                            else
+                                is_master=$(echo -e "$res" | grep "myself" | grep "master" | wc -l )
+                                if [[ ${is_master} -eq 1 ]]
+                                then
+                                    echo "The server(${other_server}:${other_port}) is master, no need to switch."
+                                    new_master_index=-1
+                                    break
+                                else
+                                    new_master_index=${other_index}
+                                fi
+                            fi
+                        fi
+                        ((j++))
+                    done
+                    if [[ ${new_master_index} -ge 0 ]]
+                    then
+                        #switch the master server
+                        new_master_server=${cluster_nodes[$(( $new_master_index * 3 + 1 ))]}
+                        new_master_port=${cluster_nodes[$(( $new_master_index * 3 + 2 ))]}
+                        echo "Try to switch the server(${new_master_server}:${new_master_port}) to master."
+                        if [[ "${PASSWORDS["${new_master_port}"]}" == "" ]]
+                        then
+                            res=$(redis-cli -h ${new_master_server} -p ${new_master_port} cluster failover takeover 2>&1)
+                        else
+                            res=$(echo ${PASSWORDS["${new_master_port}"]} | redis-cli --askpass -h ${new_master_server} -p ${new_master_port} cluster failover takeover 2>&1)
+                        fi
+                        status=$?
+                        if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ $res = *ERR* ]]
+                        then 
+                            echo "Failed to switch the server(${new_master_server}:${new_master_port}) to master node."
+                            exit 1
+                        fi
+                        echo "Succeed to switch the server(${new_master_server}:${new_master_port}) to master node."
+                    fi
+                    break
+                fi
+                ((index++))
+            done
+        else
+            echo "The redis cluster($cluster_name) supports persistent, no need to switch the slave node to master node manually"
+        fi
+        {{- end}}
 
-      {{- if eq $replicas 1 }}
+        {{- if eq $replicas 1 }}
         if [[ $SERVERS -eq 1 ]]
         then
             echo "Start the redis server: redis-server $REDIS_DIR/conf/redis.conf"
-            redis-server $REDIS_DIR/conf/redis.conf
+            res=$(redis-server $REDIS_DIR/conf/redis.conf)
         else
             echo "Start the redis server: redis-server $REDIS_DIR/${PORT}/conf/redis.conf"
-            redis-server $REDIS_DIR/${PORT}/conf/redis.conf
+            res=$(redis-server $REDIS_DIR/${PORT}/conf/redis.conf)
         fi
-      {{- else }}
+        {{- else }}
         if [[ $SERVERS -eq 1 ]]
         then
             echo "Start the redis server: rredis-server $REDIS_DIR/conf/${HOSTNAME}/redis.conf"
-            redis-server $REDIS_DIR/conf/${HOSTNAME}/redis.conf
+            res=$(redis-server $REDIS_DIR/conf/${HOSTNAME}/redis.conf)
         else
             echo "Start the redis server: redis-server $REDIS_DIR/${PORT}/conf/${HOSTNAME}/redis.conf"
-            redis-server $REDIS_DIR/${PORT}/conf/${HOSTNAME}/redis.conf
+            res=$(redis-server $REDIS_DIR/${PORT}/conf/${HOSTNAME}/redis.conf)
         fi
-      {{- end }}
-        if [[ $? -eq 0 ]]
+        {{- end }}
+        if [[ $? -ne 0 ]]
         then
-            echo "Succeed to start the ${counter}th redis server on port ${PORT}"
-        else
-            echo "Failed to start the ${counter}th redis server on port ${PORT}"
-            exit 1
+            if [[ $res ==  *Bad\ file\ format\ reading\ the\ append\ only\ file:* ]]
+            then
+                #corrupted append only file
+                {{- if eq $servers 1 }}
+                data_dir=${REDIS_DIR}/data/appendonlydir
+                {{- else }}
+                data_dir=${REDIS_DIR}/${PORT}/data/appendonlydir
+                {{- end }}
+                succeed=1
+                for f in "${data_dir}"/*
+                do
+                    if [[ ${f} == *appendonly.aof.manifest ]]
+                    then
+                        continue
+                    fi
+                    echo "Check and fix the aof file(${f}) if required"
+                    echo "y" | redis-check-aof --fix "${f}"
+                    if [[ $? -ne 0 ]]
+                    then
+                        echo "Failed to fix the file(${f})"
+                        succeed=0
+                    else
+                        echo "The file(${f}) is valid or was fixed successfully"
+                    fi
+                done
+                if [[ ${succeed} -eq 0 ]] && [[ ${CLEAR_IF_FIX_FAILED["$PORT"]} -eq 1 ]]
+                then
+                    #failed to fix the aof file, remove all aof files
+                    echo "Remove all aof file from folder ${data_dir}"
+                    rm -rf ${data_dir}/*
+                fi
+            elif [[ ${CLEAR_IF_FIX_FAILED["$PORT"]} -eq 1 ]]
+            then
+                #remove all aof files
+                echo "Remove all aof file from folder ${data_dir}"
+                rm -rf ${data_dir}/*
+            else
+                echo "Failed to start the ${counter}th redis server on port ${PORT}"
+                exit 1
+            fi
+            #start the redis again
+          {{- if eq $replicas 1 }}
+            if [[ $SERVERS -eq 1 ]]
+            then
+                echo "Start the redis server: redis-server $REDIS_DIR/conf/redis.conf"
+                res=$(redis-server $REDIS_DIR/conf/redis.conf)
+            else
+                echo "Start the redis server: redis-server $REDIS_DIR/${PORT}/conf/redis.conf"
+                res=$(redis-server $REDIS_DIR/${PORT}/conf/redis.conf)
+            fi
+          {{- else }}
+            if [[ $SERVERS -eq 1 ]]
+            then
+                echo "Start the redis server: rredis-server $REDIS_DIR/conf/${HOSTNAME}/redis.conf"
+                res=$(redis-server $REDIS_DIR/conf/${HOSTNAME}/redis.conf)
+            else
+                echo "Start the redis server: redis-server $REDIS_DIR/${PORT}/conf/${HOSTNAME}/redis.conf"
+                res=$(redis-server $REDIS_DIR/${PORT}/conf/${HOSTNAME}/redis.conf)
+            fi
+          {{- end }}
+            if [[ $? -ne 0 ]]
+            then
+                echo "Failed to start the ${counter}th redis server on port ${PORT}"
+                exit 1
+            fi
         fi
+        echo "Succeed to start the ${counter}th redis server on port ${PORT}"
         #double check whether it is running
         while [[ true ]]
         do

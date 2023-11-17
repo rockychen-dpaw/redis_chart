@@ -61,9 +61,9 @@ data:
                 {{- $conf_name = print $conf_workload_name "_" $replica_index }}
             {{- end }}
             {{- if and (eq $replicas 1) (get (index $.Values.redis.workloads $j) "clusterip") }}
-                {{ $clusterip = (get (index $.Values.redis.workloads $j) "clusterip")  }}
+                {{- $clusterip = (get (index $.Values.redis.workloads $j) "clusterip")  }}
             {{- else }}
-                {{ $clusterip = index (get (index $.Values.redis.workloads $j) "clusterips") $replica_index }}
+                {{- $clusterip = index (get (index $.Values.redis.workloads $j) "clusterips") $replica_index }}
             {{- end }}
   {{ $conf_name }}_{{- $port}}.conf: |-
     include /usr/local/redis/conf/redis_common.conf
@@ -82,21 +82,21 @@ data:
           {{- end }}
           {{- if $redis_conf }}
               {{- range $key,$value := $redis_conf }}
-                  {{- if and (ne $key "save") (ne $key "appendonly") (ne $key "cluster-enabled")}}
+                  {{- if and (ne $key "save") (ne $key "appendonly") (ne $key "cluster-enabled") (not (hasPrefix "_" $key))}}
     {{ $key }} {{ $value }}
                   {{- end }}
               {{- end }}
           {{- end }}
           {{- if $redisport_conf }}
               {{- range $key,$value := $redisport_conf }}
-                  {{- if and (ne $key "save") (ne $key "appendonly") (ne $key "cluster-enabled")}}
+                  {{- if and (ne $key "save") (ne $key "appendonly") (ne $key "cluster-enabled") (not (hasPrefix "_" $key))}}
     {{ $key }} {{ $value }}
                   {{- end }}
               {{- end }}
           {{- end }}
           {{- if $redisserver_conf }}
               {{- range $key,$value := $redisserver_conf }}
-                  {{- if and (ne $key "save") (ne $key "appendonly") (ne $key "cluster-enabled")}}
+                  {{- if and (ne $key "save") (ne $key "appendonly") (ne $key "cluster-enabled") (not (hasPrefix "_" $key))}}
     {{ $key }} {{ $value }}
                   {{- end }}
               {{- end }}
