@@ -125,9 +125,9 @@ do
         is_checked=1
         if [[ "${PASSWORDS["${PORT}"]}" == "" ]]
         then
-            res=$(redis-cli -c -p ${PORT} cluster nodes 2>&1)
+            res=$(redis-cli -c -p ${PORT} info replication 2>&1)
         else
-            res=$(echo ${PASSWORDS["${PORT}"]} | redis-cli --askpass -c -p ${PORT} cluster nodes 2>&1)
+            res=$(echo ${PASSWORDS["${PORT}"]} | redis-cli --askpass -c -p ${PORT} info replication 2>&1)
         fi
         status=$?
         if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]]
@@ -140,19 +140,32 @@ do
             echo "The server(${HOSTNAME}:${PORT}) doesn't support cluster feature"
             exit 1
         fi
-        is_slave=$(echo -e "$res" | grep "myself" | grep "slave" | wc -l )
+        is_slave=$(echo -e "$res" | grep "role" | grep "slave" | wc -l )
         if [[ ${is_slave} -eq 1 ]]
         then
             #not the master, switch to master node
             #check the sync status
-            res=$(redis-cli -c -p ${PORT} info replication 2>&1)
-            status=$?
-            if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ $res = *ERR* ]]
-            then 
-                echo "The server(${HOSTNAME}:${PORT}) is offline."
-                exit 1
+            master_host=$(echo -e "$res" | grep "master_host" | sed -E "s/[^0-9\.]//g" )
+            master_port=$(echo -e "$res" | grep "master_port" | sed -E "s/[^0-9]//g" )
+            if [[ "${PASSWORDS["${master_port}"]}" == "" ]]
+            then
+                master_res=$(redis-cli -c -p ${master_port} -h ${master_host} info replication 2>&1)
+            else
+                master_res=$(echo ${PASSWORDS["${master_port}"]} | redis-cli --askpass -c -p ${master_port} -h ${master_host} info replication 2>&1)
             fi
-            master_repl_offset=$(echo -e "${res}" | grep "master_repl_offset" | sed 's/[^0-9]//g' )
+            status=$?
+            if [[ ${status} -ne 0 ]] || [[ ${master_res} = *"Connection refused"* ]]
+            then 
+                echo "The server(${master_host}:${master_port}) is offline."
+                exit 0
+            fi
+            if [[ ${master_res} = *ERR* ]]
+            then 
+                echo "The server(${master_host}:${master_port}) doesn't support cluster feature"
+                exit 0
+            fi
+
+            master_repl_offset=$(echo -e "${master_res}" | grep "master_repl_offset" | sed 's/[^0-9]//g' )
             slave_repl_offset=$(echo -e "${res}" | grep "slave_repl_offset" | sed 's/[^0-9]//g' )
             if [[ "${master_repl_offset}" = "" ]] || [[ "${slave_repl_offset}" = "" ]]
             then
@@ -160,9 +173,9 @@ do
             else
                 diff=$((${master_repl_offset} - ${slave_repl_offset}))
             fi
-            if [[ ${diff} -lt 10 ]]
+            if [[ ${diff} -lt 1 ]]
             then
-                #only have 10 difference,switch
+                #already synced,switch
                 echo "Try to switch the server(${HOSTNAME}:${PORT}) to master node. master_repl_offset=${master_repl_offset}, slave_repl_offset=${slave_repl_offset}"
                 if [[ "${PASSWORDS["${PORT}"]}" == "" ]]
                 then
