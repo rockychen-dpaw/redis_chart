@@ -21,7 +21,7 @@
 {{- $save := "\"\"" }}
 {{- $appendonly := "no" }}
 {{- $cluster_enabled :=  false }}
-{{- $readinessProbe :=  $.Values.redis.readinessProbe | default dict }}
+{{- $startupProbe :=  $.Values.redis.startupProbe | default dict }}
 {{- $livenessProbe :=  $.Values.redis.livenessProbe | default dict }}
 {{- $has_storage := and $.Values.redis.volume $.Values.redis.volume.storage  }}
 {{- $replicas := $.Values.redis.replicas | default 1 | int }}
@@ -293,21 +293,21 @@ spec:
               {{- end }}
           {{- end }}
           {{- if not ($.Values.redis.reset | default false) }}
-          readinessProbe:
-            failureThreshold: {{ $readinessProbe.failureThreshold | default 3 }}
-            successThreshold: {{ $readinessProbe.successThreshold | default 1 }}
-            initialDelaySeconds: {{ $readinessProbe.initialDelaySeconds | default 0 }}
-            timeoutSeconds: {{ add ($.Values.redis.minReadySeconds| default $readinessProbe.timeoutSeconds | default 3) 3 }}
-            periodSeconds: {{ add ($.Values.redis.minReadySeconds| default $readinessProbe.timeoutSeconds | default 3) 7 }}
+          startupProbe:
+            failureThreshold: {{ $startupProbe.failureThreshold | default 30 }}
+            successThreshold: {{ $startupProbe.successThreshold | default 1 }}
+            initialDelaySeconds: {{ $startupProbe.initialDelaySeconds | default 0 }}
+            timeoutSeconds: {{ $startupProbe.timeoutSeconds | default 1 }}
+            periodSeconds: {{ $startupProbe.timeoutSeconds | default 1 }}
             exec:
               command:
-                - /usr/local/redis/bin/redis_readiness
+                - /usr/local/redis/bin/redis_startup
           livenessProbe:
-            failureThreshold: {{ $livenessProbe.failureThreshold | default 3 }}
+            failureThreshold: {{ $livenessProbe.failureThreshold | default 2 }}
             successThreshold: {{ $livenessProbe.successThreshold | default 1 }}
-            initialDelaySeconds: {{ $livenessProbe.initialDelaySeconds | default 0 }}
-            timeoutSeconds: {{ $livenessProbe.timeoutSeconds | default 3 }}
-            periodSeconds: {{ $livenessProbe.periodSeconds | default 10 }}
+            initialDelaySeconds: {{ $livenessProbe.initialDelaySeconds | default 1 }}
+            timeoutSeconds: {{ $livenessProbe.timeoutSeconds | default 1 }}
+            periodSeconds: {{ $livenessProbe.periodSeconds | default 2 }}
             exec:
               command:
                 - /usr/local/redis/bin/redis_liveness

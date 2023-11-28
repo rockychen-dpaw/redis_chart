@@ -1,4 +1,4 @@
-{{- define "redis.redis_readiness" }}#!/bin/bash
+{{- define "redis.redis_startup" }}#!/bin/bash
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REDIS_DIR=$( cd -- "$( dirname -- "${SCRIPT_DIR}" )" &> /dev/null && pwd )
