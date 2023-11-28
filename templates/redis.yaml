@@ -153,7 +153,9 @@ spec:
       #the master and its slaves must be running on different nodes
       - maxSkew: {{ $constraint.maxSkew | default 1 }}
         topologyKey: {{ $constraint.topologyKey }}
+        {{- if eq $constraint.whenUnsatisfiable "DoNotSchedule" }}
         minDomains: {{ $constraint.minDomains | default 1 }}
+        {{- end }}
         whenUnsatisfiable: {{ $constraint.whenUnsatisfiable }}
         labelSelector:
           matchLabels:
@@ -161,7 +163,9 @@ spec:
               {{- else if le $i $cluster_masters_list_len }}
       - maxSkew: {{ $constraint.maxSkew | default 1 }}
         topologyKey: {{ $constraint.topologyKey }}
+        {{- if eq $constraint.whenUnsatisfiable "DoNotSchedule" }}
         minDomains: {{ $constraint.minDomains | default 1 }}
+        {{- end }}
         whenUnsatisfiable: {{ $constraint.whenUnsatisfiable }}
         labelSelector:
           matchExpressions:
