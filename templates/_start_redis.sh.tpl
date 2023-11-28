@@ -197,9 +197,9 @@ do
                         if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ $res = *ERR* ]]
                         then 
                             echo "Failed to switch the server(${new_master_server}:${new_master_port}) to master node."
-                            exit 1
+                        else
+                            echo "Succeed to switch the server(${new_master_server}:${new_master_port}) to master node."
                         fi
-                        echo "Succeed to switch the server(${new_master_server}:${new_master_port}) to master node."
                     fi
                     break
                 fi
