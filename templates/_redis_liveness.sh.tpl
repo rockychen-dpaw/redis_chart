@@ -5,6 +5,7 @@ REDIS_DIR=$( cd -- "$( dirname -- "${SCRIPT_DIR}" )" &> /dev/null && pwd )
 PORT={{ $.Values.redis.port | default 6379 | int }}
 SERVERS={{ $.Values.redis.servers | default 1 | int }}
 
+{{ $servers := $.Values.redis.servers | default 1 | int }}
 {{- $cluster_size := 0 }}
 {{- $cluster_groups := 0 }}
 {{- $podid := "" }}
@@ -98,6 +99,52 @@ PORT={{ $.Values.redis.port | default 6379 | int }}
 counter=1
 while [[ $counter -le $SERVERS ]]
 do
+    {{- if eq $servers 1 }}
+    serverdir="${REDIS_DIR}"
+    {{- else }}
+    serverdir="${REDIS_DIR}/${PORT}"
+    {{- end }}
+    logfile="${serverdir}/logs/redis_$(date +"%Y%m%d-000000").log"
+    redislog="${serverdir}/logs/redis.log"
+    logfile_added=0
+    if [[ -f "${logfile}" ]]
+    then
+        logfile=$(realpath "${redislog}")
+        filesize=$(stat -c '%s' "${logfile}")
+        if [[ ${filesize} -gt {{ $.Values.redis.maxlogfilesize | default 1048576 | int }} ]]
+        then
+            logfile="${serverdir}/logs/redis_$(date +"%Y%m%d-%H%M%S").log"
+            if ! [[ -f "${logfile}" ]]
+            then
+                touch "${logfile}"
+                rm -rf "${redislog}"
+                ln -s "${logfile}" "${redislog}"
+                logfile_added=1
+            fi
+        fi
+    else
+        touch "${logfile}"
+        rm -rf "${redislog}"
+        ln -s "${logfile}" "${redislog}"
+        logfile_added=1
+    fi
+    
+    if [[ ${logfile_added} -eq 1 ]]
+    then
+        #a new log file added, manage the log files
+        res=$(ls "${serverdir}/logs/redis_*.log" | sort -rs )
+        maxfiles={{ $.Values.redis.maxlogfiles | default 10 }}
+        index=0
+        while IFS= read -r file
+        do
+            ((index++))
+            if [[ ${index} -gt ${maxfiles} ]]
+            then
+                rm -f "${serverdir}/logs/${file}"
+            fi
+        done <<< "${res}"
+    fi
+
     is_checked=0
     {{- range $i,$redis_cluster := $.Values.redis.redisClusters | default dict }}
     is_master=0

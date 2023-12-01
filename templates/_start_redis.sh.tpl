@@ -5,6 +5,8 @@ REDIS_DIR=$( cd -- "$( dirname -- "${SCRIPT_DIR}" )" &> /dev/null && pwd )
 PORT={{ $.Values.redis.port | default 6379 | int }}
 SERVERS={{ $.Values.redis.servers | default 1 | int }}
 
+{{ $servers := $.Values.redis.servers | default 1 | int }}
+
 {{- $cluster_size := 0 }}
 {{- $cluster_groups := 0 }}
 {{- $master_nodes_str := "" }}
@@ -210,24 +212,49 @@ do
         fi
         {{- end}}
 
-        {{- if eq $replicas 1 }}
-        if [[ $SERVERS -eq 1 ]]
-        then
-            echo "Start the redis server: redis-server $REDIS_DIR/conf/redis.conf"
-            res=$(redis-server $REDIS_DIR/conf/redis.conf)
-        else
-            echo "Start the redis server: redis-server $REDIS_DIR/${PORT}/conf/redis.conf"
-            res=$(redis-server $REDIS_DIR/${PORT}/conf/redis.conf)
-        fi
+        {{- if eq $servers 1 }}
+        serverdir="${REDIS_DIR}"
         {{- else }}
-        if [[ $SERVERS -eq 1 ]]
+        serverdir="${REDIS_DIR}/${PORT}"
+        {{- end }}
+        logfile="${serverdir}/logs/redis_$(date +"%Y%m%d-000000").log"
+        redislog="${serverdir}/logs/redis.log"
+        if [[ -f "${redislog}" ]] && ! [[ -L "${redislog}" ]]
         then
-            echo "Start the redis server: rredis-server $REDIS_DIR/conf/${HOSTNAME}/redis.conf"
-            res=$(redis-server $REDIS_DIR/conf/${HOSTNAME}/redis.conf)
-        else
-            echo "Start the redis server: redis-server $REDIS_DIR/${PORT}/conf/${HOSTNAME}/redis.conf"
-            res=$(redis-server $REDIS_DIR/${PORT}/conf/${HOSTNAME}/redis.conf)
+            #normal  redis log file, change it to symbolic file
+            mv "${redislog}" "${logfile}"
+            ln -s "${logfile}" "${redislog}"
+        else 
+            if ! [[ -f "${logfile}" ]]
+            then
+                if [[ -e "${logfile}" ]]
+                then
+                    rm -rf "${logfile}"
+                fi
+                touch "${logfile}"
+                if [[ -e "${redislog}" ]]
+                then
+                    rm -rf "${redislog}"
+                fi
+            elif ! [[ -L "${redislog}" ]]
+            then
+                if [[ -e "${redislog}" ]]
+                then
+                    rm -f "${redislog}"
+                fi
+            fi
+            if ! [[ -e "${redislog}" ]]
+            then
+                ln -s "${logfile}" "${redislog}" 
+            fi
         fi
+
+        {{- if eq $replicas 1 }}
+        echo "Start the redis server: redis-server ${serverdir}/conf/redis.conf"
+        res=$(redis-server ${serverdir}/conf/redis.conf)
+        {{- else }}
+        echo "Start the redis server: rredis-server ${serverdir}/conf/${HOSTNAME}/redis.conf"
+        res=$(redis-server ${serverdir}/conf/${HOSTNAME}/redis.conf)
         {{- end }}
         if [[ $? -ne 0 ]]
         then
@@ -273,23 +300,11 @@ do
             fi
             #start the redis again
           {{- if eq $replicas 1 }}
-            if [[ $SERVERS -eq 1 ]]
-            then
-                echo "Start the redis server: redis-server $REDIS_DIR/conf/redis.conf"
-                res=$(redis-server $REDIS_DIR/conf/redis.conf)
-            else
-                echo "Start the redis server: redis-server $REDIS_DIR/${PORT}/conf/redis.conf"
-                res=$(redis-server $REDIS_DIR/${PORT}/conf/redis.conf)
-            fi
+            echo "Start the redis server: redis-server ${serverdir}/conf/redis.conf"
+            res=$(redis-server ${serverdir}/conf/redis.conf)
           {{- else }}
-            if [[ $SERVERS -eq 1 ]]
-            then
-                echo "Start the redis server: rredis-server $REDIS_DIR/conf/${HOSTNAME}/redis.conf"
-                res=$(redis-server $REDIS_DIR/conf/${HOSTNAME}/redis.conf)
-            else
-                echo "Start the redis server: redis-server $REDIS_DIR/${PORT}/conf/${HOSTNAME}/redis.conf"
-                res=$(redis-server $REDIS_DIR/${PORT}/conf/${HOSTNAME}/redis.conf)
-            fi
+            echo "Start the redis server: redis-server ${serverdir}/conf/${HOSTNAME}/redis.conf"
+            res=$(redis-server ${serverdir}/conf/${HOSTNAME}/redis.conf)
           {{- end }}
             if [[ $? -ne 0 ]]
             then
@@ -311,12 +326,26 @@ do
             if [[ $status -eq 0 ]] && [[ $res != *"Connection refused"* ]] && [[ "${res}" = "PONG" ]]
             then
                 echo "The redis server(127.0.0.1:${PORT}) is ready to use."
-                if [[ $SERVERS -eq 1 ]]
-                then
-                    touch $REDIS_DIR/data/redis_started_at_$(date +"%Y%m%d-%H%M%S")
-                else
-                    touch $REDIS_DIR/${PORT}/data/redis_started_at_$(date +"%Y%m%d-%H%M%S")
-                fi
+                file=${serverdir}/data/redis_started_at_$(date +"%Y%m%d-%H%M%S")
+                touch ${file}
+                echo "create file ${file}"
+
+                #manage the redis_started_at files
+                res=$(ls "${serverdir}/data" | sort -rs )
+                maxfiles={{ $.Values.redis.maxstartatfiles | default 30 }}
+                index=0
+                while IFS= read -r file
+                do
+                    if [[ ${file} = redis_started_at_* ]]
+                    then
+                        ((index++))
+                        if [[ ${index} -gt ${maxfiles} ]]
+                        then
+                           rm -f "${serverdir}/data/${file}"
+                        fi
+                    fi
+                done <<< "${res}"
+
                 break
             fi
             sleep 1
@@ -368,12 +397,7 @@ function check_related_clusters(){
                     echo "The redis cluster(${cluster_name}) has alreay been created."
                     return 0
                 fi
-                if [[ $SERVERS -eq 1 ]]
-                then
-                    nodes_file="${REDIS_DIR}/data/nodes.conf"
-                else
-                    nodes_file="${REDIS_DIR}/${port}/data/nodes.conf"
-                fi
+                nodes_file="${serverdir}/data/nodes.conf"
                 if ! [[ -f "${nodes_file}" ]]
                 then
                     echo "Can't find the nodes.conf.the redis server(127.0.0.1:${port}) does not support cluster feature"
@@ -657,7 +681,6 @@ then
             fi
             ((index++))
         done
-
     fi
 fi
 {{- end }}
