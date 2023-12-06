@@ -97,6 +97,9 @@ PASSWORDS[{{ $port | quote }}]={{ (get $redisport_conf "requirepass") | default 
 hour=$(date +"%-H")
 PORT={{ $.Values.redis.port | default 6379 | int }}
 counter=1
+currentlogfile="redis_$(date +"%Y%m%d-%H%M%S").log"
+day=$(date +"%Y%m%d")
+firstlogfile="redis_${day}-000000.log"
 while [[ $counter -le $SERVERS ]]
 do
     {{- if eq $servers 1 }}
@@ -104,16 +107,36 @@ do
     {{- else }}
     serverdir="${REDIS_DIR}/${PORT}"
     {{- end }}
-    logfile="${serverdir}/logs/redis_$(date +"%Y%m%d-000000").log"
+
     redislog="${serverdir}/logs/redis.log"
     logfile_added=0
-    if [[ -f "${logfile}" ]]
+    res=$(ls "${serverdir}/logs" | sort -rs )
+    logfile=""
+    while IFS= read -r file
+    do
+        if [[ ${file} = redis_*.log ]]
+        then
+            if [[ ${file} = redis_${day}-*.log ]]
+            then
+                logfile=${file}
+            fi
+            break
+        fi
+    done <<< "${res}"
+
+    if [[ "${logfile}" == "" ]]
     then
+        logfile="${serverdir}/logs/${firstlogfile}"
+        touch "${logfile}"
+        rm -rf "${redislog}"
+        ln -s "${logfile}" "${redislog}"
+        logfile_added=1
+    else
         logfile=$(realpath "${redislog}")
         filesize=$(stat -c '%s' "${logfile}")
         if [[ ${filesize} -gt {{ $.Values.redis.maxlogfilesize | default 1048576 | int }} ]]
         then
-            logfile="${serverdir}/logs/redis_$(date +"%Y%m%d-%H%M%S").log"
+            logfile="${serverdir}/logs/${currentlogfile}"
             if ! [[ -f "${logfile}" ]]
             then
                 touch "${logfile}"
@@ -122,25 +145,22 @@ do
                 logfile_added=1
             fi
         fi
-    else
-        touch "${logfile}"
-        rm -rf "${redislog}"
-        ln -s "${logfile}" "${redislog}"
-        logfile_added=1
     fi
     
     if [[ ${logfile_added} -eq 1 ]]
     then
         #a new log file added, manage the log files
-        res=$(ls "${serverdir}/logs/redis_*.log" | sort -rs )
         maxfiles={{ $.Values.redis.maxlogfiles | default 10 }}
-        index=0
+        index=1 # a new logfile was added which is not included in ${res}
         while IFS= read -r file
         do
-            ((index++))
-            if [[ ${index} -gt ${maxfiles} ]]
+            if [[ ${file} = redis_*.log ]]
             then
-                rm -f "${serverdir}/logs/${file}"
+                ((index++))
+                if [[ ${index} -gt ${maxfiles} ]]
+                then
+                    rm -f "${serverdir}/logs/${file}"
+                fi
             fi
         done <<< "${res}"
     fi
