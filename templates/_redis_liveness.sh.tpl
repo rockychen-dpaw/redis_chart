@@ -140,10 +140,10 @@ do
             if ! [[ -f "${logfile}" ]]
             then
                 touch "${logfile}"
-                rm -rf "${redislog}"
-                ln -s "${logfile}" "${redislog}"
                 logfile_added=1
             fi
+            rm -rf "${redislog}"
+            ln -s "${logfile}" "${redislog}"
         fi
     fi
     
