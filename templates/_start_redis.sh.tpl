@@ -5,7 +5,7 @@ REDIS_DIR=$( cd -- "$( dirname -- "${SCRIPT_DIR}" )" &> /dev/null && pwd )
 PORT={{ $.Values.redis.port | default 6379 | int }}
 SERVERS={{ $.Values.redis.servers | default 1 | int }}
 
-{{ $servers := $.Values.redis.servers | default 1 | int }}
+{{- $servers := $.Values.redis.servers | default 1 | int }}
 
 {{- $cluster_size := 0 }}
 {{- $cluster_groups := 0 }}
@@ -137,7 +137,7 @@ function start_redis(){
             res=$(echo ${PASSWORDS["$PORT"]} | redis-cli --askpass -p $PORT ping 2>&1)
         fi
         status=$?
-        if [[ $status -eq 0 ]] && [[ $res != *"Connection refused"* ]] && [[ "${res}" = "PONG" ]]
+        if [[ $status -eq 0 ]] && [[ "${res}" = "PONG" ]]
         then
             echo "The redis server(127.0.0.1:${PORT}) is ready to use."
             file=${serverdir}/data/redis_started_at_$(date +"%Y%m%d-%H%M%S")
@@ -304,21 +304,19 @@ do
         cluster_groups=0
         cluster_persistent=0
         {{- range $i,$redis_cluster := $.Values.redis.redisClusters | default dict }}
-        _cluster_nodes={{ print "( \"${" $redis_cluster.name "_nodes[@]}\" )" }}  
-        _cluster_size={{ print "${" $redis_cluster.name "_size}" }}
+        cluster_nodes={{ print "( \"${" $redis_cluster.name "_nodes[@]}\" )" }}  
+        cluster_size={{ print "${" $redis_cluster.name "_size}" }}
 
         #cluster doesn't support persistent. so master switch is required 
         index=0
-        while [[ $index -lt ${_cluster_size} ]]
+        while [[ $index -lt ${cluster_size} ]]
         do
-            server=${_cluster_nodes[$(( $index * 3 ))]}
-            port=${_cluster_nodes[$(( $index * 3 + 2 ))]}
+            server=${cluster_nodes[$(( $index * 3 ))]}
+            port=${cluster_nodes[$(( $index * 3 + 2 ))]}
             if [[ "${server}" == "${HOSTNAME}" ]] && [[ ${port} -eq ${PORT} ]]
             then
                 clusternode_index=${index}
                 cluster_name={{ print "${" $redis_cluster.name "_name}" }}
-                cluster_nodes={{ print "( \"${" $redis_cluster.name "_nodes[@]}\" )" }}  
-                cluster_size={{ print "${" $redis_cluster.name "_size}" }}
                 cluster_slaves={{ print "${" $redis_cluster.name "_slaves}" }}
                 cluster_groups={{ print "${" $redis_cluster.name "_groups}" }}
                 cluster_persistent={{ print "${" $redis_cluster.name "_persistent}" }}
@@ -784,8 +782,8 @@ then
         done
     fi
 fi
-{{- end }}
+{{- end }} # the end of "check the clusters one by one"
 
 /bin/bash
 exit 0
-{{- end }}
+{{- end }} # the end of "define "redis.start_redis"
