@@ -357,7 +357,7 @@ do
         if [[ -f "${redislog}" ]] && ! [[ -L "${redislog}" ]]
         then
             #normal  redis log file, change it to symbolic file
-            logfile="${serverdir}/logs/redis_${firstlogfile}.log"
+            logfile="${serverdir}/logs/${firstlogfile}"
             mv "${redislog}" "${logfile}"
             ln -s "${logfile}" "${redislog}"
         else 
@@ -377,7 +377,7 @@ do
 
             if [[ "${logfile}" == "" ]]
             then
-                logfile="${serverdir}/logs/redis_${firstlogfile}.log"
+                logfile="${serverdir}/logs/${firstlogfile}"
                 touch "${logfile}"
                 if [[ -e "${redislog}" ]]
                 then
