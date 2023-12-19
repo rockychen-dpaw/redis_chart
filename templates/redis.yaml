@@ -183,6 +183,8 @@ spec:
           - /usr/local/redis/bin/start_redis
           {{- if $.Values.redis.envs }}
           env:
+            - name: RELEASE_TIME
+              value: {{ now | date "2006-01-02T15:04:05" | quote }}
               {{- range $index,$env := $.Values.redis.envs | default dict }}
             - name: {{ $env.name }}
               value: {{ $env.value }}
@@ -192,12 +194,18 @@ spec:
           image: {{ $.Values.redis.image }}
           imagePullPolicy: Always
           name: {{ $workload_name }}
-          resources: {}
+          {{- if $.Values.redis.resources }}
+          resources:
+{{ $.Values.redis.resources | toYaml | indent 12 }}
+          {{- end }}
           securityContext:
+            runAsNonRoot: false
             allowPrivilegeEscalation: false
             privileged: false
             readOnlyRootFilesystem: false
-            runAsNonRoot: false
+            runAsNonRoot: true
+            capabilities: {}
+            runAsUser: 999
           terminationMessagePath: /dev/termination-log
           terminationMessagePolicy: File
           tty: true
