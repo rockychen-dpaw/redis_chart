@@ -1,120 +1,13 @@
 {{- define "redis.start_redis" }}#!/bin/bash
-SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-REDIS_DIR=$( cd -- "$( dirname -- "${SCRIPT_DIR}" )" &> /dev/null && pwd )
+#start redis, will create the redis cluster if required
 
-PORT={{ $.Values.redis.port | default 6379 | int }}
-SERVERS={{ $.Values.redis.servers | default 1 | int }}
+{{- template "redis.base_script" }}
 
 {{- $servers := $.Values.redis.servers | default 1 | int }}
-
-{{- $cluster_size := 0 }}
-{{- $cluster_groups := 0 }}
-{{- $master_nodes_str := "" }}
-{{- $podid := "" }}
-{{- $nodeip := "" }}
-{{- $workload_index := 0 }}
 {{- $replicas := $.Values.redis.replicas | default 1 | int }}
-{{- $redis_conf := (get $.Values.redis "redis.conf") | default dict }}
-{{- $redisport_conf := false }}
-{{- $save := false }}
-{{- $appendonly := false }}
-{{- $persistent := 0 }}
-{{- $replica_index := 0 }}
-#check the clusters one by one, create it if required
-#find the cluster configuration
-{{- range $i,$redis_cluster := $.Values.redis.redisClusters | default dict }}
-declare -a {{ $redis_cluster.name}}_nodes
-    {{- $cluster_size = 0 }}
-    {{- range $j,$redis_node := $redis_cluster.servers }}
-        {{- $cluster_size = add $cluster_size 1 }}
-    {{- end }}
-    {{- $master_nodes_str = "" }}
-{{ $redis_cluster.name}}_nodes=()
-{{ $redis_cluster.name}}_name={{ $redis_cluster.name }}
-    {{- $cluster_groups = div $cluster_size (add ($redis_cluster.clusterReplicas | default 1) 1) | int }}
-    {{- range $j,$redis_node := $redis_cluster.servers }}
-        {{- if and (gt $j 0) (lt $j $cluster_groups) }}
-            {{- $master_nodes_str = print $master_nodes_str " "}}
-        {{- end}}
-        {{- range $k,$v := regexSplit ":" $redis_node -1 }}
-            {{- if eq $k 0 }}
-                {{- if contains "-" $v }}
-                    {{- $replica_index = (index (regexSplit "-" $v -1) 1) | int }}
-                    {{- $workload_index =  sub ((trimPrefix "redis" (index (regexSplit "-" $v -1) 0)) | int ) 1 }}
-                    {{- $podid = print $.Release.Name (trimPrefix "redis" (index (regexSplit "-" $v -1) 0)) "-" $replica_index}}
-                {{- else }}
-                    {{- $replica_index = 0 | int }}
-                    {{- $workload_index =  sub ((trimPrefix "redis" $v) | int ) 1 }}
-                    {{- $podid = print $.Release.Name (trimPrefix "redis" $v) "-" $replica_index}}
-                {{- end }}
-                {{- if and (eq $replicas 1) (get (index $.Values.redis.workloads $workload_index) "clusterip") }}
-                    {{ $nodeip = get (index $.Values.redis.workloads $workload_index) "clusterip" }}
-                {{- else }}
-                    {{ $nodeip = index (get (index $.Values.redis.workloads $workload_index) "clusterips") $replica_index }}
-                {{- end }}
-
-{{ $redis_cluster.name}}_nodes[{{ mul $j 3 }}]={{ print $podid | quote }}
-{{ $redis_cluster.name}}_nodes[{{ add (mul $j 3) 1 }}]={{ print $nodeip | quote }}
-                {{- if lt $j $cluster_groups }}
-                    {{- $master_nodes_str = print $master_nodes_str $nodeip }}  
-                {{- end }}
-            {{- else }}
-                {{- $redisport_conf = (get $.Values.redis (print "redis_" $v ".conf")) | default dict }}
-                {{- $save = get $redisport_conf "save" | default (get $redis_conf "save") | default "\"\"" }}
-                {{- $appendonly = get $redisport_conf "appendonly" | default (get $redis_conf "appendonly") | default "no" }}
-{{ $redis_cluster.name}}_nodes[{{ add (mul $j 3) 2 }}]={{ $v }}
-                {{- if not $save }}
-                    {{- $save = "\"\"" }}
-                {{- end }}
-                {{- if or (ne $save "\"\"")  (ne $appendonly  "no") }}
-                    {{- $persistent = 1 }}
-                {{- else }}
-                    {{- $persistent = 0 }}
-                {{- end }}
-                {{- if lt $j $cluster_groups }}
-                    {{- $master_nodes_str = print $master_nodes_str ":" $v }}
-                {{- end }}
-            {{- end }}
-        {{- end}}
-    {{- end }}
-{{ $redis_cluster.name}}_size={{ $cluster_size }}
-{{ $redis_cluster.name}}_slaves={{ $redis_cluster.clusterReplicas | default 1 }}
-{{ $redis_cluster.name}}_groups={{ div $cluster_size (add ($redis_cluster.clusterReplicas | default 1) 1) | int }}
-{{ $redis_cluster.name}}_persistent={{ $persistent }}
-{{- if ($redis_cluster.resetMasterNodes | default false) }}
-{{ $redis_cluster.name}}_reset_masternodes=1
-{{- else }}
-{{ $redis_cluster.name}}_reset_masternodes=0
-{{- end }}
-{{ $redis_cluster.name}}_nodes_str={{ $master_nodes_str | quote }}
-
-{{- end }}
-
-declare -A PASSWORDS
-declare -A CLEAR_IF_FIX_FAILED
-{{- $replicas := $.Values.redis.replicas | default 1 | int }}
-{{- $workload_index := 0 }}
-{{- $replica_index := 0 }}
-{{- $start_port := $.Values.redis.port | default 6379 |int }}
-{{- $servers := $.Values.redis.servers | default 1 | int }}
-{{- $end_port := add $start_port $servers | int  }}
-{{- $redis_conf := (get $.Values.redis "redis.conf") | default dict  }}
-{{- $redisport_conf := dict }}
-{{- range $i,$port := untilStep $start_port $end_port 1 }}
-    {{- $redisport_conf = (get $.Values.redis (print "redis_" $port ".conf")) | default dict }}
-PASSWORDS[{{ $port | quote }}]={{ (get $redisport_conf "requirepass") | default (get $redis_conf "requirepass") | default "" | quote }}
-{{ if (get $redisport_conf "_clear_data_if_fix_failed") | default (get $redis_conf "_clear_data_if_fix_failed") | default false }}
-CLEAR_IF_FIX_FAILED[{{ $port | quote }}]=1
-{{- else }}
-CLEAR_IF_FIX_FAILED[{{ $port | quote }}]=0
-{{- end }}
-{{- end }}
-
-day=$(date +"%Y%m%d")
-firstlogfile="redis_${day}-000000.log"
-#check whether all servers are up
 
 function start_redis(){
+    #start the redis server, if failed,  return 128
     {{- if eq $replicas 1 }}
     echo "Start the redis server: redis-server ${serverdir}/conf/redis.conf"
     res=$(redis-server ${serverdir}/conf/redis.conf)
@@ -126,7 +19,9 @@ function start_redis(){
     then
         return 128
     fi
+
     echo "Check whether the redis server(127.0.0.1:${PORT}) is started successfully..."
+    #try 5 times, check interval is 1 second
     attempts=5
     while [[ true ]]
     do
@@ -139,12 +34,14 @@ function start_redis(){
         status=$?
         if [[ $status -eq 0 ]] && [[ "${res}" = "PONG" ]]
         then
+            #redis is online and ready to use
             echo "The redis server(127.0.0.1:${PORT}) is ready to use."
+            #create a startup file for later checking
             file=${serverdir}/data/redis_started_at_$(date +"%Y%m%d-%H%M%S")
             touch ${file}
             echo "create file ${file}"
 
-            #manage the redis_started_at files
+            #manage the redis_started_at files, only keep the latest configured number of startup files.
             res=$(ls "${serverdir}/data" | sort -rs )
             maxfiles={{ $.Values.redis.maxstartatfiles | default 30 }}
             index=0
@@ -155,6 +52,7 @@ function start_redis(){
                     ((index++))
                     if [[ ${index} -gt ${maxfiles} ]]
                     then
+                       #delete the outdated startup files
                        rm -f "${serverdir}/data/${file}"
                     fi
                 fi
@@ -165,6 +63,7 @@ function start_redis(){
         fi
         if [[ ${attempts} -eq -1 ]]
         then
+            # try unlimited times
             sleep 1
         elif [[ ${attempts} -gt 0 ]]
         then
@@ -180,9 +79,16 @@ function start_redis(){
 }
 
 function switch_one_slave_to_master(){
-    #this redis server is blonging to this cluster
+    #switch one slave to master because the current master is offline
+    #try to find the master node  from the next node of the current redis server, if reach the end, and then start from the begining.
+    #the logic will search all nodes in the redis cluster group, except the current redis server
+    #return 0 if already have one master
+    #return 1 if switch succeed
+    #return 128 if failed
     j=1
     new_master_index=-1
+    #try to find the index of the slave which will be switched to master
+    #if a slave is already the master, then no need to switch.
     while [[ $j -le ${cluster_slaves} ]]
     do
         other_index=$(((${clusternode_index} + $j * $cluster_groups) % ${cluster_size}))
@@ -236,6 +142,7 @@ function switch_one_slave_to_master(){
             echo "Failed to switch the server(${new_master_server}:${new_master_port}) to master node."
             return 128
         else
+            #check whether switch is succeed or not.
             attempts=5
             msg=""
             while [[ true ]]
@@ -280,9 +187,11 @@ function switch_one_slave_to_master(){
     return 0
 }
 
+#try to start the redis server, will switch the master node if necessary
 counter=1
 while [[ $counter -le $SERVERS ]]
 do
+    #check whether redis server is online or not
     if [[ "${PASSWORDS["$PORT"]}" == "" ]]
     then
         res=$(redis-cli -p $PORT ping 2>&1)
@@ -292,7 +201,7 @@ do
     status=$?
     if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ "$res" != "PONG" ]]
     then
-        #redis server is not started
+        #redis server with the port $PORT is not started
         #switch the redis master if this server is belong to a redis cluster which is persistent disabled, and also the corresponding redis server has not taken over yet.
         switch_required=0
         switched=0
@@ -303,6 +212,8 @@ do
         cluster_slaves=0
         cluster_groups=0
         cluster_persistent=0
+        #find the redis cluster which this redis server belongs to.
+        #if it is not belonging to any redis cluster, the clusternode_index should be -1
         {{- range $i,$redis_cluster := $.Values.redis.redisClusters | default dict }}
         cluster_nodes={{ print "( \"${" $redis_cluster.name "_nodes[@]}\" )" }}  
         cluster_size={{ print "${" $redis_cluster.name "_size}" }}
@@ -343,11 +254,12 @@ do
                     switched=0
                 fi
             else
-                echo "The redis cluster($cluster_name) supports persistent, no need to switch the slave node to master node manually"
+                echo "The redis cluster($cluster_name) supports persistent, no need to switch the slave node to master node at this stage"
                 switched=0
             fi
         fi
 
+        #create a daily based redis log file and use soft link to link the log file to redislog file
         {{- if eq $servers 1 }}
         serverdir="${REDIS_DIR}"
         {{- else }}
@@ -395,11 +307,13 @@ do
                 ln -s "${logfile}" "${redislog}" 
             fi
         fi
-
+  
+        #start redis server
         start_redis
         status=$?
         if [[ ${status} -gt 127 ]]
         then
+            #start failed, try to recovery
             {{- if eq $servers 1 }}
             data_dir=${REDIS_DIR}/data/appendonlydir
             {{- else }}
@@ -407,7 +321,8 @@ do
             {{- end }}
             if [[ ${clusternode_index} -eq -1 ]] && [[ $res ==  *Bad\ file\ format\ reading\ the\ append\ only\ file:* ]]
             then
-                #corrupted append only file
+                #this redis server is not belonging to any redis cluster
+                #corrupted append only file, try to fix it
                 # try to fix the append only file if not in cluster mode
                 succeed=1
                 for f in "${data_dir}"/*
@@ -434,10 +349,12 @@ do
                 fi
             elif [[ ${CLEAR_IF_FIX_FAILED["$PORT"]} -eq 1 ]]
             then
+                #the redis server is belonging to a redis cluster, 
                 #remove all aof files
                 echo "Remove all aof file from folder ${data_dir}"
                 rm -rf ${data_dir}/*
             else
+                #can not start the redis server
                 exit 1
             fi
             #start the redis again
@@ -458,16 +375,25 @@ done
 
 function check_related_clusters(){
     #check whether the related clusters are created.
+    #return 0: redis cluster was created
+    #return 1: redis cluster was not created, and the current redis server is the first node, create it now
+    #return 2: redis cluster was not created, and the current redis server is not the first node, let the first node create it
+    #return 3: redis server is not belonging to any redis cluster
+    #return 128, check failed
     local server=""
     local port=0
     local index=0
-    local PORT=0
     index=0
     while [[ $index -lt $cluster_size ]]
     do
         host=${cluster_nodes[$(( $index * 3 ))]}
         server=${cluster_nodes[$(( $index * 3 + 1 ))]}
         port=${cluster_nodes[$(( $index * 3 + 2 ))]}
+        {{- if eq $servers 1 }}
+        serverdir="${REDIS_DIR}"
+        {{- else }}
+        serverdir="${REDIS_DIR}/${port}"
+        {{- end }}
         if [[ "${host}" == "${HOSTNAME}" ]]
         then
             echo "The redis server(${HOSTNAME}:${port}) is the member of the redis cluster(${cluster_name}). Check whether it was created or not."
@@ -494,8 +420,93 @@ function check_related_clusters(){
                 if [[ $res = *cluster_state:ok* ]]
                 then
                     echo "The redis cluster(${cluster_name}) has alreay been created."
+                    if [[ ! -f ${serverdir}/conf/${HOSTNAME}/nodes.conf ]];then
+                       #nodes.conf is not backup before,backup now
+
+                       #check whether the redis cluster has the initial status
+                       while [[ true ]]
+                       do
+                           
+                           index=0
+                           succeed=1
+                           while [[ $index -lt $cluster_size ]]
+                           do
+                               redis_host=${cluster_nodes[$(( $index * 3 ))]}
+                               redis_server=${cluster_nodes[$(( $index * 3 + 1 ))]}
+                               redis_port=${cluster_nodes[$(( $index * 3 + 2 ))]}
+
+                               if [[ "${PASSWORDS["${redis_port}"]}" == "" ]];then
+                                   res=$(redis-cli -h ${redis_server} -p ${redis_port} cluster info 2>&1)
+                               else
+                                   res=$(echo ${PASSWORDS["${redis_port}"]} | redis-cli --askpass -h ${redis_server} -p ${redis_port} cluster info 2>&1)
+                               fi
+                               status=$?
+                               if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]];then
+                                   echo "The redis server(${redis_server}:${redis_port}) is not running,status=${status}"
+                                   succeed=0
+                                   break
+                               fi
+                               if [[ $res ==  *ERR* ]];then
+                                   echo "The redis server(${redis_server}:${redis_port}) does not support cluster feature"
+                                   succeed=0
+                                   break
+                               fi
+                               res=$(echo "$res" | grep "cluster_state")
+                               if [[ $res != *cluster_state:ok* ]];then
+                                   echo "The redis server(${redis_server}:${redis_port}) was still not added to the redis cluster(${cluster_name})."
+                                   succeed=0
+                                   break
+                               fi
+
+                               if [[ ${index} -lt ${cluster_groups} ]];then
+                                   should_be_master=1
+                               else
+                                   should_be_master=0
+                               fi
+                               if [[ "${PASSWORDS["${redis_port}"]}" == "" ]];then
+                                   res=$(redis-cli -h ${redis_server} -p ${redis_port} cluster nodes 2>&1)
+                               else
+                                   res=$(echo ${PASSWORDS["${redis_port}"]} | redis-cli --askpass -h ${redis_server} -p ${redis_port} cluster nodes 2>&1)
+                               fi
+                               status=$?
+                               if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]];then
+                                   # "The redis server(${redis_server}:${redis_port}) is not running,status=${status}"
+                                   succeed=0
+                                   break
+                               fi
+                               is_master=$(echo -e "$res" | grep "myself" | grep "master" | wc -l )
+                               if [[ ${is_master} -ne ${should_be_master} ]];then
+                                   #the current server is not in the initial status,wait
+                                   if [[ ${is_master} -eq 1 ]];then
+                                       echo "The server(${redis_server}:${redis_port}) is master, but it is configured as slave.can't backup the nodes.conf right now."
+                                   else
+                                       echo "The server(${redis_server}:${redis_port}) is slave, but it is configured as master.can't backup the nodes.conf right now."
+                                   fi
+                                   succeed=0
+                                   break
+                               else
+                                   if [[ ${is_master} -eq 1 ]];then
+                                       echo "The server(${redis_server}:${redis_port}) is master, but it is also configured as master."
+                                   else
+                                       echo "The server(${redis_server}:${redis_port}) is slave, but it is configured as slave"
+                                   fi
+                               fi
+                               ((index++))
+                           done
+                           if [[ ${succeed} -eq 0 ]];then
+                               #failed
+                               sleep 60
+                               continue
+                           fi
+                           break
+                       done
+
+                       echo "All redis servers are in initial status, backup the nodes.conf"
+                       cp ${serverdir}/data/nodes.conf ${serverdir}/conf/${HOSTNAME}
+                    fi
                     return 0
                 fi
+
                 nodes_file="${serverdir}/data/nodes.conf"
                 if ! [[ -f "${nodes_file}" ]]
                 then
@@ -516,7 +527,33 @@ function check_related_clusters(){
                     return 1
                 else
                     echo "The redis cluster(${cluster_name}) is not created. let the node(${cluster_nodes[0]}) create it"
-                    return 0
+                    #wait the first node to create the redis cluster
+                    while [[ true ]]
+                    do
+                        if [[ "${PASSWORDS["$port"]}" == "" ]]
+                        then
+                            res=$(redis-cli  -p ${port} cluster info 2>&1)
+                        else
+                            res=$(echo ${PASSWORDS["$port"]} | redis-cli --askpass -p $port cluster info 2>&1)
+                        fi
+                        status=$?
+                        if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]]
+                        then
+                            sleep 1
+                            continue
+                        fi
+                        res=$(echo "$res" | grep "cluster_state")
+                        if [[ $res = *cluster_state:ok* ]]
+                        then
+                            #redis cluster was created
+                            break
+                        fi
+                        sleep 1
+                    done
+                    #redis cluster was create , backup the nodes file, 
+                    #this is the first chance to backup the nodes file for the non first node
+                    cp -f ${serverdir}/data/nodes.conf ${serverdir}/conf/${HOSTNAME}
+                    return 2
                 fi
             done
             break
@@ -524,10 +561,14 @@ function check_related_clusters(){
         ((index++))
     done
     echo "The redis server(${HOSTNAME}) is not belonging to the redis cluster(${cluster_name})."
-    return 0
+    return 3
 }
 
 function precheck(){
+    #check whether all redis server in the redis cluster are running
+    #the logic will keep checking unitl all servers are running or check failed
+    #return 0:  all servers are running
+    #return 128: check failed
     echo "Check whether all redis nodes are running"
     local index=0
     local server=""
@@ -539,6 +580,7 @@ function precheck(){
         echo "Check whether the redis server(${server}:${port}) is running"
         while [[ true ]]
         do
+            #check whether redis server is running
             if [[ "${PASSWORDS["$port"]}" == "" ]]
             then
                 res=$(redis-cli -h ${server} -p ${port} cluster info 2>&1)
@@ -587,14 +629,17 @@ check_related_clusters
 status=$?
 if [[ $status -gt 127 ]]
 then
+    #failed
     exit 1
 fi
 if [[ $status -eq 1 ]]
 then
+    #redis cluster was not created,create it now
     precheck
     staus=$?
     if [[ $status -gt 127 ]]
     then
+        #check failed
         exit 1
     fi
     if [[ $status -eq 0 ]]
@@ -613,11 +658,12 @@ then
             exit 1
         fi
         echo "Succeed to create the redis cluster(${cluster_name}) without replicas"
-        echo "Start to add the replicas to redis cluster(${cluster_name})"
 
+        echo "Start to add the replicas to redis cluster(${cluster_name})"
         index=0
         while [[ ${index} -lt ${cluster_groups} ]]
         do
+            #get the master_id from redis cluster
             master_server=${cluster_nodes[$(( $index * 3 + 1 ))]}
             master_port=${cluster_nodes[$(( $index * 3 + 2 ))]}
 
@@ -636,12 +682,14 @@ then
             master_id=${res}
             echo "Succeed to retrieve the cluster id(${master_id}) from master server(${master_server}:${master_port}) )"
 
+            #add the slaves one by one
             j=1
             while [[ $j -le ${cluster_slaves} ]]
             do
                 slave_index=$((($index + $j * $cluster_groups) % ${cluster_size}))
                 slave_server=${cluster_nodes[$(( $slave_index * 3 + 1 ))]}
                 slave_port=${cluster_nodes[$(( $slave_index * 3 + 2 ))]}
+
                 echo "Start to let slave server(${slave_server}:${slave_port}) meet with master server(${master_server}:${master_port})"
                 while [[ true ]]
                 do
@@ -661,6 +709,7 @@ then
                         break
                     fi
                 done
+                #wait the meet process to finish
                 while [[ true ]]
                 do
                     if [[ "${PASSWORDS["${slave_port}"]}" == "" ]]
@@ -684,6 +733,7 @@ then
                         break
                     fi
                 done
+
                 echo "Start to add the slave server(${slave_server}:${slave_port}) to the master server(${master_server}:${master_port})"
                 while [[ true ]]
                 do
@@ -780,6 +830,15 @@ then
             fi
             ((index++))
         done
+        #backup the nodes.conf
+        #this is the first chance to backup the nodes file for the first node
+        {{- if eq $servers 1 }}
+        serverdir="${REDIS_DIR}"
+        {{- else }}
+        port=${cluster_nodes[2]}
+        serverdir="${REDIS_DIR}/${port}"
+        {{- end }}
+        cp -f ${serverdir}/data/nodes.conf ${serverdir}/conf/${HOSTNAME}
     fi
 fi
 {{- end }} # the end of "check the clusters one by one"

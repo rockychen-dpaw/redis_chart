@@ -1,117 +1,29 @@
 {{- define "redis.redis_liveness" }}#!/bin/bash
-SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-REDIS_DIR=$( cd -- "$( dirname -- "${SCRIPT_DIR}" )" &> /dev/null && pwd )
 
-PORT={{ $.Values.redis.port | default 6379 | int }}
-SERVERS={{ $.Values.redis.servers | default 1 | int }}
+{{- template "redis.base_script" }}
 
-{{ $servers := $.Values.redis.servers | default 1 | int }}
-{{- $cluster_size := 0 }}
-{{- $cluster_groups := 0 }}
-{{- $podid := "" }}
-{{- $nodeip := "" }}
-{{- $workload_index := 0 }}
-{{- $replicas := $.Values.redis.replicas | default 1 | int }}
-{{- $redis_conf := (get $.Values.redis "redis.conf") | default dict }}
-{{- $redisport_conf := false }}
-{{- $save := false }}
-{{- $appendonly := false }}
-{{- $persistent := 0 }}
-{{- $replica_index := 0 }}
-#check the clusters one by one, create it if required
-#find the cluster configuration
-{{- range $i,$redis_cluster := $.Values.redis.redisClusters | default dict }}
-declare -a {{ $redis_cluster.name}}_nodes
-    {{- $cluster_size = 0 }}
-    {{- range $j,$redis_node := $redis_cluster.servers }}
-        {{- $cluster_size = add $cluster_size 1 }}
-    {{- end }}
-{{ $redis_cluster.name}}_nodes=()
-{{ $redis_cluster.name}}_name={{ $redis_cluster.name }}
-    {{- $cluster_groups = div $cluster_size (add ($redis_cluster.clusterReplicas | default 1) 1) | int }}
-    {{- range $j,$redis_node := $redis_cluster.servers }}
-        {{- range $k,$v := regexSplit ":" $redis_node -1 }}
-            {{- if eq $k 0 }}
-                {{- if contains "-" $v }}
-                    {{- $replica_index = (index (regexSplit "-" $v -1) 1) | int }}
-                    {{- $workload_index =  sub ((trimPrefix "redis" (index (regexSplit "-" $v -1) 0)) | int ) 1 }}
-                    {{- $podid = print $.Release.Name (trimPrefix "redis" (index (regexSplit "-" $v -1) 0)) "-" $replica_index}}
-                {{- else }}
-                    {{- $replica_index = 0 | int }}
-                    {{- $workload_index =  sub ((trimPrefix "redis" $v) | int ) 1 }}
-                    {{- $podid = print $.Release.Name (trimPrefix "redis" $v) "-" $replica_index}}
-                {{- end }}
-                {{- if and (eq $replicas 1) (get (index $.Values.redis.workloads $workload_index) "clusterip") }}
-                    {{ $nodeip = get (index $.Values.redis.workloads $workload_index) "clusterip" }}
-                {{- else }}
-                    {{ $nodeip = index (get (index $.Values.redis.workloads $workload_index) "clusterips") $replica_index }}
-                {{- end }}
-
-{{ $redis_cluster.name}}_nodes[{{ mul $j 3 }}]={{ print $podid | quote }}
-{{ $redis_cluster.name}}_nodes[{{ add (mul $j 3) 1 }}]={{ print $nodeip | quote }}
-            {{- else }}
-                {{- $redisport_conf = (get $.Values.redis (print "redis_" $v ".conf")) | default dict }}
-                {{- $save = get $redisport_conf "save" | default (get $redis_conf "save") | default "\"\"" }}
-                {{- $appendonly = get $redisport_conf "appendonly" | default (get $redis_conf "appendonly") | default "no" }}
-{{ $redis_cluster.name}}_nodes[{{ add (mul $j 3) 2 }}]={{ $v }}
-                {{- if not $save }}
-                    {{- $save = "\"\"" }}
-                {{- end }}
-                {{- if or (ne $save "\"\"")  (ne $appendonly  "no") }}
-                    {{- $persistent = 1 }}
-                {{- else }}
-                    {{- $persistent = 0 }}
-                {{- end }}
-            {{- end }}
-        {{- end}}
-    {{- end }}
-{{ $redis_cluster.name}}_size={{ $cluster_size }}
-{{ $redis_cluster.name}}_slaves={{ $redis_cluster.clusterReplicas | default 1 }}
-{{ $redis_cluster.name}}_groups={{ div $cluster_size (add ($redis_cluster.clusterReplicas | default 1) 1) | int }}
-{{ $redis_cluster.name}}_persistent={{ $persistent }}
-{{ $redis_cluster.name}}_reset_start={{ $redis_cluster.resetStart | default 0 }}
-{{ $redis_cluster.name}}_reset_end={{ $redis_cluster.resetEnd | default 24 }}
-{{- if ($redis_cluster.resetMasterNodes | default false) }}
-{{ $redis_cluster.name}}_reset_master=1
-{{- else }}
-{{ $redis_cluster.name}}_reset_master=0
-{{- end }}
-
-{{- end }}
-
-declare -A PASSWORDS
-{{- $replicas := $.Values.redis.replicas | default 1 | int }}
-{{- $workload_index := 0 }}
-{{- $replica_index := 0 }}
-{{- $start_port := $.Values.redis.port | default 6379 |int }}
 {{- $servers := $.Values.redis.servers | default 1 | int }}
-{{- $end_port := add $start_port $servers | int  }}
-{{- $redis_conf := (get $.Values.redis "redis.conf") | default dict  }}
-{{- $redisport_conf := dict }}
-{{- range $i,$port := untilStep $start_port $end_port 1 }}
-    {{- $redisport_conf = (get $.Values.redis (print "redis_" $port ".conf")) | default dict }}
-PASSWORDS[{{ $port | quote }}]={{ (get $redisport_conf "requirepass") | default (get $redis_conf "requirepass") | default "" | quote }}
-{{- end }}
+{{- $replicas := $.Values.redis.replicas | default 1 | int }}
 
 #reset master node if required
 hour=$(date +"%-H")
-PORT={{ $.Values.redis.port | default 6379 | int }}
 counter=1
 currentlogfile="redis_$(date +"%Y%m%d-%H%M%S").log"
-day=$(date +"%Y%m%d")
-firstlogfile="redis_${day}-000000.log"
 while [[ $counter -le $SERVERS ]]
 do
+    #get the redis server home dir
     {{- if eq $servers 1 }}
     serverdir="${REDIS_DIR}"
     {{- else }}
     serverdir="${REDIS_DIR}/${PORT}"
     {{- end }}
-
+    
+    #manage the redis log file
     redislog="${serverdir}/logs/redis.log"
     logfile_added=0
     res=$(ls "${serverdir}/logs" | sort -rs )
     logfile=""
+    #find the latest today's log file
     while IFS= read -r file
     do
         if [[ ${file} = redis_*.log ]]
@@ -126,6 +38,7 @@ do
 
     if [[ "${logfile}" == "" ]]
     then
+        #can not find logfile, use the firstlogfile 
         logfile="${serverdir}/logs/${firstlogfile}"
         touch "${logfile}"
         rm -rf "${redislog}"
@@ -167,6 +80,7 @@ do
 
     is_checked=0
     {{- range $i,$redis_cluster := $.Values.redis.redisClusters | default dict }}
+    #check whether the current redis server is a master server
     is_master=0
     if [[ {{ print "${" $redis_cluster.name "_"}}reset_master} -eq 1 ]] && [[ ${hour} -ge {{ print "${" $redis_cluster.name "_"}}reset_start} ]] && [[ ${hour} -lt {{ print "${" $redis_cluster.name "_"}}reset_end} ]]
     then
@@ -187,7 +101,10 @@ do
     fi
     if [[ ${is_master} -eq 1 ]]
     then
+        #it is a master server
         #switch to master if it is not the master
+        #before switch, should guarantee all the data are synced
+        #first check whether this server is the master or not
         echo "The redis server(${HOSTNAME}:${PORT}) should be a master node of the redis cluser({{ $redis_cluster.name }})"
         is_checked=1
         if [[ "${PASSWORDS["${PORT}"]}" == "" ]]
@@ -272,7 +189,8 @@ do
     {{- end }}
     if [[ ${is_checked} -eq 0 ]]
     then
-        #check whether it is online 
+        #not checked before, means this redis server is not belonging to a redis cluster or it is not a master 
+        check whether it is online 
         if [[ "${PASSWORDS["$PORT"]}" == "" ]]
         then
             res=$(redis-cli -p $PORT ping 2>&1)

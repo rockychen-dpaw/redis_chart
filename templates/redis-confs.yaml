@@ -1,17 +1,25 @@
+#create a config map for all workloads
+#find the number of workloads
 {{- $workloads := 0 }}
 {{- range $i,$workload := $.Values.redis.workloads }}
     {{- $workloads = add $workloads 1}}
 {{- end }}
+#get the start port and end port based on configured port number and the number of servers running in each pod
 {{- $start_port := $.Values.redis.port | default 6379 |int }}
 {{- $servers := $.Values.redis.servers | default 1 | int }}
 {{- $end_port := add $start_port $servers | int  }}
+
+#get the configured common redis conf 
 {{- $redis_conf := (get $.Values.redis "redis.conf") | default dict }}
+#the configured redis conf for specified port
 {{- $redisport_conf := "" }}
+#the configured redis conf for specified workload and port
 {{- $redisserver_conf := "" }}
 {{- $save := "\"\"" }}
 {{- $appendonly := "no" }}
 {{- $cluster_enabled :=  false }}
 {{- $clusterip :=  "" }}
+#whether has persistent storage
 {{- $has_storage := and $.Values.redis.volume $.Values.redis.volume.storage  }}
 {{- $replicas := $.Values.redis.replicas | default 1 | int }}
 
@@ -22,43 +30,51 @@ metadata:
   annotations:
     field.cattle.io/description: redis configurations
 data:
-  {{- $conf_workload_name := "redis" }}
+  #The only difference between workload_conf_name and workload_name is workload_conf_name uses prefix 'redis', but workload_name uses 'releasename'
+  #because the properties defined in the config map should be consistent for different release name
+  {{- $workload_conf_name := "" }}
   {{- $workload_name := $.Release.Name }}
   {{- $conf_name := $.Release.Name }}
   {{- range $i,$port := untilStep $start_port $end_port 1 }}
+      #get configured redis port conf 
       {{- $redisport_conf = (get $.Values.redis (print "redis_" $port ".conf")) | default dict }}
       {{- range $j,$workload_index := untilStep 1 (add $workloads 1 | int) 1 }}
+          #get the workload name and workload_conf_name
           {{- if le $workloads 1 }}
               {{- $workload_name = $.Release.Name }}
-              {{- $conf_workload_name = "redis" }}
+              {{- $workload_conf_name = "redis" }}
           {{- else }}
               {{- if le $workloads 9 }}
                   {{- $workload_name = print $.Release.Name $workload_index }}
-                  {{- $conf_workload_name = print "redis" $workload_index }}
+                  {{- $workload_conf_name = print "redis" $workload_index }}
               {{- else if le $workload_index 9 }}
                   {{- $workload_name = print $.Release.Name "0" $workload_index }}
-                  {{- $conf_workload_name = print  "redis0" $workload_index }}
+                  {{- $workload_conf_name = print  "redis0" $workload_index }}
               {{- else }}
                   {{- $workload_name = print $.Release.Name $workload_index }}
-                  {{- $conf_workload_name = print "redis" $workload_index }}
+                  {{- $workload_conf_name = print "redis" $workload_index }}
               {{- end }}
           {{- end }}
-          {{- $redisserver_conf = (get $.Values.redis (print $conf_workload_name "_" $port ".conf")) | default dict }}
+          #get configured redis server conf 
+          {{- $redisserver_conf = (get $.Values.redis (print $workload_conf_name "_" $port ".conf")) | default dict }}
+          #get the configured value from server conf, port conf and common conf; otherwise use default value
           {{- $save = (get $redisserver_conf "save") | default (get $redisport_conf "save") | default (get $redis_conf "save") | default "\"\"" }}
           {{- $appendonly = (get $redisserver_conf "appendonly") | default (get $redisport_conf "appendonly") | default (get $redis_conf "appendonly") | default "no" }}
           {{- $cluster_enabled = and $has_storage (eq ((get $redisserver_conf "cluster-enabled") | default (get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes") }}
           {{- if not $save }}
               {{- $save = "\"\"" }}
           {{- end }}
+          #create a property for each redis server(identified by workload index, replica index and port) running in the pod, 
+          #the property name should be {workload_conf_name}_{replica_index}_{port}, replica_index is 0 based and has 2 digits if have more than 9 replicas
           {{- range $k,$replica_index := until $replicas }}
             {{- if eq $replicas 1 }}
-                {{- $conf_name = $conf_workload_name }}
+                {{- $conf_name = $workload_conf_name }}
             {{- else if le $replicas 9 }}
-                {{- $conf_name = print $conf_workload_name "_" $replica_index }}
+                {{- $conf_name = print $workload_conf_name "_" $replica_index }}
             {{- else if le $replica_index 9 }}
-                {{- $conf_name = print $conf_workload_name "_0" $replica_index }}
+                {{- $conf_name = print $workload_conf_name "_0" $replica_index }}
             {{- else }}
-                {{- $conf_name = print $conf_workload_name "_" $replica_index }}
+                {{- $conf_name = print $workload_conf_name "_" $replica_index }}
             {{- end }}
             {{- if and (eq $replicas 1) (get (index $.Values.redis.workloads $j) "clusterip") }}
                 {{- $clusterip = (get (index $.Values.redis.workloads $j) "clusterip")  }}

@@ -1,29 +1,32 @@
+#create a volume for each workload only if redis storage is configured and also replica is 1
 {{- $replicas := $.Values.redis.replicas | default 1 | int }}
 {{- if and $.Values.redis.volume $.Values.redis.volume.storage  (eq $replicas 1) }}
 {{- $workloads := 0 }}
 {{- range $i,$workload := $.Values.redis.workloads }}
     {{- $workloads = add $workloads 1}}
 {{- end }}
-{{- $redis_name := $.Release.Name }}
-{{- $redis_index := 0 }}
+{{- $workload_name := "" }}
+{{- $workload_index := 0 }}
 {{- range $i,$workload := $.Values.redis.workloads }}
-    {{- $redis_index = add $i 1 }}
+    #workload_index is 1 based
+    {{- $workload_index = add $i 1 }}
+    #get the workload name from releasename and workload_index
     {{- if le $workloads 1 }}
-        {{- $redis_name = $.Release.Name }}
+        {{- $workload_name = $.Release.Name }}
     {{- else }}
 ---
         {{- if le $workloads 9 }}
-            {{- $redis_name = print $.Release.Name $redis_index }}
-        {{- else if le $redis_index 9 }}
-            {{- $redis_name = print $.Release.Name "0" $redis_index }}
+            {{- $workload_name = print $.Release.Name $workload_index }}
+        {{- else if le $workload_index 9 }}
+            {{- $workload_name = print $.Release.Name "0" $workload_index }}
         {{ else }}
-            {{- $redis_name = print $.Release.Name $redis_index }}
+            {{- $workload_name = print $.Release.Name $workload_index }}
         {{- end }}
     {{- end }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ $redis_name }}-data
+  name: {{ $workload_name }}-data
 spec:
   accessModes:
     - {{ $.Values.redis.volume.accessMode | default "ReadWriteOnce" }}

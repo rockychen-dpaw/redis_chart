@@ -1,17 +1,20 @@
+#create a pod disruption budget for each workload whose replica is greater than 1
 {{- $replicas := $.Values.redis.replicas | default 1 | int }}
 {{- if gt $replicas 1 }}
 {{- $workloads := 0 }}
 {{- $workload_index := 0 }}
 {{- $workload_name := "" }}
+#find the total number of workloads
 {{- range $i,$workload := $.Values.redis.workloads }}
     {{- $workloads = add $workloads 1 }}
 {{- end }}
 
 {{- range $i,$workload := $.Values.redis.workloads }}
+    #workload_index is 1 based
     {{- $workload_index = add $i 1 }}
+    #get the workload name based on release name and workload_index
     {{- if le $workloads 1 }}
         {{- $workload_name = $.Release.Name }}
-        {{- $conf_workload_name = "redis" }}
     {{- else }}
 ---
         {{- if le $workloads 9 }}

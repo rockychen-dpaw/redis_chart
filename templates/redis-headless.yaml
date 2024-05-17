@@ -1,13 +1,16 @@
-{{- $replicas := $.Values.redis.replicas | default 1 | int }}
-{{- if gt $replicas 1 }}
+#create a headless service for each workload
+#Get the total workloads from workloads configuration
 {{- $workloads := 0 }}
 {{- range $i,$workload := $.Values.redis.workloads }}
     {{- $workloads = add $workloads 1}}
 {{- end }}
-{{- $workload_name := $.Release.Name }}
+
+{{- $workload_name := "" }}
 {{- $workload_index := 0 }}
 {{- range $i,$workload := $.Values.redis.workloads }}
+    #workload index is 1 based
     {{- $workload_index = add $i 1 }}
+    #the workload name should be {releasename} if only one workload is configured, otherwise is {releasename}{workload_index}
     {{- if le $workloads 1 }}
         {{- $workload_name = $.Release.Name }}
     {{- else }}
@@ -43,5 +46,4 @@ spec:
     redis.workloadselector: {{ $.Release.Namespace }}-{{ $workload_name }}
   sessionAffinity: None
   type: ClusterIP
-{{- end }}
 {{- end }}

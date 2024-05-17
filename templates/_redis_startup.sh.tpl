@@ -1,4 +1,5 @@
 {{- define "redis.redis_startup" }}#!/bin/bash
+#check whether all redis servers running in the pod are online
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REDIS_DIR=$( cd -- "$( dirname -- "${SCRIPT_DIR}" )" &> /dev/null && pwd )
@@ -8,6 +9,8 @@ declare -A PASSWORDS
 {{- $start_port := $.Values.redis.port | default 6379 |int }}
 {{- $servers := $.Values.redis.servers | default 1 | int }}
 {{- $end_port := add $start_port $servers | int  }}
+
+#find the redis password
 {{- $redis_conf := (get $.Values.redis "redis.conf") | default dict  }}
 {{- $redisport_conf := dict }}
 {{- range $i,$port := untilStep $start_port $end_port 1 }}

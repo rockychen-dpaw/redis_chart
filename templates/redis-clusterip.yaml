@@ -1,25 +1,31 @@
+#Create a clusterip service for each pod instance, mapping all the ports exposed by all redis server running in the pod, if the redis server is a redis cluster node, 
+#the admin port number(regular port number + 10000) should also be mapped
 #get the number of redis workloads which should be created.
 {{- $workloads := 0 }}
 {{- range $i,$workload := $.Values.redis.workloads }}
     {{- $workloads = add $workloads 1}}
 {{- end }}
 {{- $replicas := $.Values.redis.replicas | default 1 | int }}
-{{- $redispods := mul $workloads $replicas }}
+# the total number of redis pods
+{{- $pods := mul $workloads $replicas }}
 {{- $start_port := $.Values.redis.port | default 6379 |int }}
 #the number of redis servers running in each pod
 {{- $servers := $.Values.redis.servers | default 1 | int }}
 {{- $end_port := add $start_port $servers | int  }}
 
 #declare the variables used in the following logic.
-{{- $redis_name := $.Release.Name }}
-{{- $workload_name := $.Release.Name }}
+# the name of the workload should be "{releasename}{workload_index}", workload_index is 1 based, if have more than 9 workloads, workload_index uses two digits format,
+# only one workload is configured, the workload name is {releasename}
+{{- $workload_name := "" }}
+# the name of the pod should be "{workload_name}{replica_index}", replica_index is 0 based
+{{- $pod_name := "" }}
 {{- $workload_index := 0 }}
 {{- $node_workload_index := 0 }}
 {{- $node_replica_index := 0 }}
 {{- $node := "" }}
 {{- $cluster_node := false }}
 {{- $clusterip := "" }}
-#create clusterip service for each redis pod, workload index is 1 based, pod index is 0 based
+#create clusterip service for each pod
 {{- range $i,$workload := $.Values.redis.workloads }}
     #workload index is 1 based
     {{- $workload_index = add $i 1 }}
@@ -37,20 +43,12 @@
     {{- end }}
 
     {{- range $replica_index,$k := until $replicas }}
-        {{- if eq $replicas 1 }}
-            {{- $redis_name = $workload_name }}
-        {{- else if le $replicas 9 }}
-            {{- $redis_name = print $workload_name "-" $replica_index }}
-        {{- else if le $replica_index 9 }}
-            {{- $redis_name = print $workload_name "_0" $replica_index }}
-        {{- else }}
-            {{- $redis_name = print $workload_name "_" $replica_index }}
-        {{- end }}
+        {{- $pod_name = print $workload_name "-" $replica_index }}
 
-        {{- if gt $redispods 1 }}
+        {{- if gt $pods 1 }}
 ---
         {{- end}}
-        #find the configured clusterid based on the replica_index
+        #find the configured clusterip based on the replica_index from workloads configuration
         {{- if and (eq $replicas 1) ($workload.clusterip) }}
             {{ $clusterip = $workload.clusterip }}
         {{- else }}
@@ -59,7 +57,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ $redis_name}}
+  name: {{ $pod_name }}
 spec:
   clusterIP: {{ $clusterip }}
   clusterIPs:
@@ -69,7 +67,7 @@ spec:
     - IPv4
   ipFamilyPolicy: SingleStack
   ports:
-    #configure the port mapping for each port exposed by redis
+    #configure the port mapping for each port exposed by the pod
     {{- range $j,$port := untilStep $start_port $end_port 1 }}
     - name: port-{{ $port }}
       port: {{ $port }}
@@ -79,7 +77,9 @@ spec:
           {{- $cluster_node = false }}
           #find whether the redis server running in the pod is a cluster node, based on the workload_index, replica_index and port number in the redis_server
           {{- range $l,$redis_server := $cluster.servers }}
+                #Get the node from the configured redis server
                 {{- $node = index (regexSplit ":" $redis_server -1) 0 }}
+                #find the workload_indes and replica_index from the node 
                 {{- if contains "-" $node }}
                     {{- $node_replica_index = (index (regexSplit "-" $node -1) 1) | int }}
                     {{- $node_workload_index = (trimPrefix "redis" (index (regexSplit "-" $node -1) 0)) | int }}
@@ -87,11 +87,13 @@ spec:
                     {{- $node_replica_index = 0 | int }}
                     {{- $node_workload_index = (trimPrefix "redis" $node) | int }}
                 {{- end }}
+                #if the node's workload_index, replica_index and port number are equal with the current pod's  workload_index and replica_index 
+                # and the port number confired  in the redis_server, this pod is a cluster node
                 {{- if and (eq $workload_index $node_workload_index) (eq $replica_index $node_replica_index) (hasSuffix (print ":" $port) $redis_server) }}
                     {{- $cluster_node = true }}
                 {{- end }}
           {{- end }}
-          #if it is a cluster node, add a mapping for the port used by redis cluster
+          #if it is a cluster node, add a mapping for the special port used by redis cluster, the port is the regular redis  port plus 10000
           {{- if $cluster_node }}
     - name: port-{{ add $port 10000 }}
       port: {{ add $port 10000 }}
@@ -101,7 +103,7 @@ spec:
       {{- end }}
     {{- end }}
   selector:
-    statefulset.kubernetes.io/pod-name: {{ print $workload_name "-" $replica_index }}
+    statefulset.kubernetes.io/pod-name: {{ $pod_name }}
   sessionAffinity: None
   type: ClusterIP
     {{- end }}

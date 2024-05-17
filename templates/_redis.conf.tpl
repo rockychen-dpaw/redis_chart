@@ -1,4 +1,4 @@
-{{- define "redis.redis_common.conf" }}
+{{- define "redis.redis_common.conf" }
 # Redis configuration file example.
 #
 # Note that in order to read the configuration file, Redis must be

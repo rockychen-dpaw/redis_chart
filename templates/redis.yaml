@@ -1,10 +1,13 @@
+#create the workload 
+#get the total number of workloads
 {{- $workloads := 0 }}
 {{- range $i,$workload := $.Values.redis.workloads }}
     {{- $workloads = add $workloads 1}}
 {{- end }}
-{{- $workload_name := $.Release.Name }}
-{{- $conf_workload_name := "redis" }}
-{{- $conf_name := "redis" }}
+#declare the variables 
+{{- $workload_name := "" }}
+{{- $workload_conf_name := "" }}
+{{- $conf_name := "" }}
 {{- $workload_index := 0 }}
 {{- $node_index := 0 }}
 {{- $node := 0 }}
@@ -25,8 +28,12 @@
 {{- $livenessProbe :=  $.Values.redis.livenessProbe | default dict }}
 {{- $has_storage := and $.Values.redis.volume $.Values.redis.volume.storage  }}
 {{- $replicas := $.Values.redis.replicas | default 1 | int }}
+#include all the cluster master list(the node list doesn't include the port) for the redis clusters
+#more than one redis clusters can use the same cluster master list , but with different port
 {{- $cluster_masters_list := list }}
 {{- $cluster_masters_list_len := 0 }}
+
+#find all the cluster master list and add them to cluser_masters_list
 {{- range $i,$cluster := $.Values.redis.redisClusters | default list }}
     {{- $nodes_len := 0 }}
     {{- range $j,$node := $cluster.servers }}
@@ -34,7 +41,7 @@
     {{- end }}
     {{- $cluster_groups_len := div $nodes_len (add ($cluster.clusterReplicas | default 1 ) 1 ) | int }}
     {{- $cluster_masters := list }}
-    #add selector for cluster groups
+    #Get the master node(not  includeing the port) list
     {{- range $j,$master_index := until $cluster_groups_len }}
         {{- $cluster_node := index $cluster.servers $master_index }}
         #remove the port 
@@ -43,6 +50,7 @@
         {{- $cluster_node = print $.Release.Name (trimPrefix "redis" $cluster_node) }}
         {{- $cluster_masters = append $cluster_masters $cluster_node}}
     {{- end }}
+    #add the master node list into cluster_masters_list if the list doesn't exist before
     {{- $masters_exists := false }}
     {{- range $j,$masters := $cluster_masters_list }}
         {{- $exists := true }}
@@ -60,22 +68,25 @@
         {{- $cluster_masters_list_len = add $cluster_masters_list_len 1 }}
     {{- end }}
 {{- end }}
+
 {{- range $i,$workload := $.Values.redis.workloads }}
+    #workload index is 1 based
+    #get the workload_name and workload_conf_name
     {{- $workload_index = add $i 1 }}
     {{- if le $workloads 1 }}
         {{- $workload_name = $.Release.Name }}
-        {{- $conf_workload_name = "redis" }}
+        {{- $workload_conf_name = "redis" }}
     {{- else }}
 ---
         {{- if le $workloads 9 }}
             {{- $workload_name = print $.Release.Name $workload_index }}
-            {{- $conf_workload_name = print "redis" $workload_index }}
+            {{- $workload_conf_name = print "redis" $workload_index }}
         {{- else if le $workload_index 9 }}
             {{- $workload_name = print $.Release.Name "0" $workload_index }}
-            {{- $conf_workload_name = print "redis0" $workload_index }}
+            {{- $workload_conf_name = print "redis0" $workload_index }}
         {{ else }}
             {{- $workload_name = print $.Release.Name $workload_index }}
-            {{- $conf_workload_name = print "redis" $workload_index }}
+            {{- $workload_conf_name = print "redis" $workload_index }}
         {{- end }}
     {{- end }}
 apiVersion: apps/v1
@@ -85,14 +96,22 @@ metadata:
 spec:
   selector:
     matchLabels:
+      #the label for the workload, include all the replicas
       redis.workloadselector: {{ $.Release.Namespace}}-{{ $workload_name }}
+      # the label for all the pods created by all workloads
       redis.releaseselector: {{ $.Release.Namespace}}-{{ $.Release.Name }}
+      #
       {{- range $k,$cluster := get $.Values.redis "redisClusters" | default list }}
+          #find all the ports used by the redis cluster
           {{- $ports = list }}
           {{- $ports_len = 0 }}
           {{- range $l,$redis_node := $cluster.servers }}
+                #get the configured redis_node name from the configuration.
+                #the redis_node name should be redis{workload_index}-{replica-index}
                 {{- $node = index (regexSplit ":" $redis_node -1) 0 }}
+                #get the configured port number 
                 {{- $port = (index (regexSplit ":" $redis_node -1) 1) | int }}
+                #find the node_index, because node_index is 1 based, but $i is 0 based, so sub 1 from node_index
                 {{- if contains "-" $node }}
                     {{- $node_index = (sub (trimPrefix "redis" (index (regexSplit "-" $node -1) 0) | int) 1) }}
                 {{- else }}
@@ -103,6 +122,8 @@ spec:
                     {{- $ports_len = add $ports_len 1 }}
                 {{- end }}
           {{- end }}
+          #if have ports used by the redis cluster,create a label for each port used by the redis cluster
+          #this label will be used as the selector by the rediscluster clusterip service 
           {{- range $l,$p := $ports  }}
               {{- if eq $ports_len 1 }}
       {{ $.Release.Name}}.rediscluster.{{ $cluster.name }}.selector: apps.statefulset-{{ $.Release.Namespace}}-{{ $.Release.Name}}-rediscluster-{{ $cluster.name }}
@@ -119,6 +140,7 @@ spec:
     metadata:
       creationTimestamp: null
       labels:
+        #same as matchLabels
         redis.workloadselector: {{ $.Release.Namespace}}-{{ $workload_name }}
         redis.releaseselector: {{ $.Release.Namespace}}-{{ $.Release.Name }}
       {{- range $k,$cluster := get $.Values.redis "redisClusters" | default list }}
@@ -147,6 +169,7 @@ spec:
       {{- end }}
     spec:
       {{- if and (gt $replicas 1 ) $.Values.redis.topologySpreadConstraints }}
+      #only include the topology if replicas is greater than 1
       topologySpreadConstraints:
           {{- range $i,$constraint := $.Values.redis.topologySpreadConstraints }}
               {{- if eq $i 0 }}
@@ -227,13 +250,13 @@ spec:
           {{- range $i,$port := untilStep $start_port $end_port 1 }}
               {{- range $j,$replica_index := until $replicas }}
                   {{- if eq $replicas 1 }}
-                      {{- $conf_name = $conf_workload_name }}
+                      {{- $conf_name = $workload_conf_name }}
                   {{- else if le $replicas 9 }}
-                      {{- $conf_name = print $conf_workload_name "_" $replica_index }}
+                      {{- $conf_name = print $workload_conf_name "_" $replica_index }}
                   {{- else if le $replica_index 9 }}
-                      {{- $conf_name = print $conf_workload_name "_0" $replica_index }}
+                      {{- $conf_name = print $workload_conf_name "_0" $replica_index }}
                   {{- else }}
-                      {{- $conf_name = print $conf_workload_name "_" $replica_index }}
+                      {{- $conf_name = print $workload_conf_name "_" $replica_index }}
                   {{- end }}
                   {{- if eq $replicas 1 }}
                       {{- if eq $servers 1 }}
@@ -257,7 +280,7 @@ spec:
           {{- if $has_storage  }}
               {{- range $i,$port := untilStep $start_port $end_port 1 }}
                   {{- $redisport_conf = (get $.Values.redis (print "redis_" $port ".conf")) | default dict}}
-                  {{- $redisserver_conf = (get $.Values.redis (print $conf_workload_name "_" $port ".conf")) | default dict }}
+                  {{- $redisserver_conf = (get $.Values.redis (print $workload_conf_name "_" $port ".conf")) | default dict }}
                   {{- $save = (get $redisserver_conf "save") | default (get $redisport_conf "save") | default (get $redis_conf "save") | default "\"\"" }}
                   {{- $appendonly = (get $redisserver_conf "appendonly") | default (get $redisport_conf "appendonly") | default (get $redis_conf "appendonly") | default "no" }}
                   {{- $cluster_enabled = and $has_storage (eq ((get $redisserver_conf "cluster-enabled") | default (get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes") }}
@@ -327,7 +350,8 @@ spec:
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       schedulerName: default-scheduler
-      securityContext: {}
+      securityContext:
+        fsGroup: 999
       terminationGracePeriodSeconds: 30
       {{- if $workload.affinity }}
       affinity:
@@ -349,8 +373,6 @@ spec:
           claimName: {{ $workload_name }}-data
           type: persistentvolumeclaim
           {{- else }}
-      securityContext:
-        fsGroup: 999
   volumeClaimTemplates:
     - apiVersion: v1
       kind: PersistentVolumeClaim

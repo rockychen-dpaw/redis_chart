@@ -1,5 +1,8 @@
+#create a clusterip service for each ports exposed by each redis cluster
 {{- $redis_clusters := list }}
-{{- $total_len := 0 }}
+#the total number of pords exposed by all redis clusters
+{{- $total_ports_len := 0 }}
+#find all the ports exposed by each redis cluster
 {{- range $i,$cluster := (get $.Values.redis "redisClusters" | default dict) }}
     {{- $cluster_ports := list }}
     {{- $cluster_ports_len := 0}}
@@ -8,19 +11,25 @@
         {{- if not (has $port $cluster_ports) }}
             {{- $cluster_ports = append $cluster_ports $port }}
             {{- $cluster_ports_len = add $cluster_ports_len 1 }}
-            {{- $total_len = add $total_len 1 }}
+            {{- $total_ports_len = add $total_ports_len 1 }}
         {{- end}}
     {{- end }}
     {{- $redis_clusters = append $redis_clusters (dict "name" $cluster.name "ports" $cluster_ports "len" $cluster_ports_len) }}
 {{- end }}
 {{- range $i,$cluster := $redis_clusters }}
     {{- range $j,$port := $cluster.ports }}
-        {{- if gt $total_len 1 }}
+        {{- if gt $total_ports_len 1 }}
 ---
         {{- end }}
 apiVersion: v1
 kind: Service
 metadata:
+#The default redis cluster
+#  only one port exposed by redis cluster, the {releasename}-rediscluster
+#  more than one ports exposed by redis cluster, the {releasename}-rediscluster-{port}
+#Other redis cluster
+#  only one port exposed by redis cluster, the {releasename}-rediscluster-{clustername}
+#  more than one ports exposed by redis cluster, the {releasename}-rediscluster-{clustername}-{port}
         {{- if eq $cluster.name "default" }}
             {{- if gt $cluster.len 1 }}
   name: {{ $.Release.Name }}-rediscluster-{{ $port }}
