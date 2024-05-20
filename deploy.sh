@@ -1,5 +1,9 @@
 #!/bin/bash
 
+if [[ "$1" == "uninstall" ]];then
+    helm $@
+    exit $?
+fi
 helm_dir="${@: -1}"
 set -- "${@:1:$(($#-1))}"
 
