@@ -16,23 +16,39 @@ while [[ $counter -le $SERVERS ]]
 do
   {{- if eq $servers 1 }}
     if [[ -f ${REDIS_DIR}/data/nodes.conf.bak ]];then
-        cp ${REDIS_DIR}/data/nodes.conf.bak /tmp/nodes.conf
+        cp ${REDIS_DIR}/data/nodes.conf.bak /tmp/nodes.conf.bak
+
+        echo "Clean the data folder(${REDIS_DIR}/data)"
         rm -rf ${REDIS_DIR}/data/*
-        mv /tmp/nodes.conf ${REDIS_DIR}/data/nodes.conf
+
+        echo "Restore nodes.conf from nodes.conf.bak"
+        cp /tmp/nodes.conf.bak ${REDIS_DIR}/data/nodes.conf
+        mv /tmp/nodes.conf.bak ${REDIS_DIR}/data/nodes.conf.bak
     else
+        echo "Nodes.conf.bak is not found, redis cluster will be recreated."
+        echo "Clean the data folder(${REDIS_DIR}/data)"
         rm -rf ${REDIS_DIR}/data/*
     fi
 
+    echo "Clean the redis log(${REDIS_DIR}/logs)"
     rm -rf ${REDIS_DIR}/logs/*
   {{- else }}
     if [[ -f ${REDIS_DIR}/${PORT}/data/nodes.conf.bak ]];then
-        cp ${REDIS_DIR}/${PORT}/data/nodes.conf.bak /tmp/nodes.conf
+        cp ${REDIS_DIR}/${PORT}/data/nodes.conf.bak /tmp/nodes.conf.bak
+
+        echo "Clean the data folder(${REDIS_DIR}/${PORT}/data)"
         rm -rf ${REDIS_DIR}/${PORT}/data/*
-        mv /tmp/nodes.conf ${REDIS_DIR}/${PORT}/data/nodes.conf
+
+        echo "Restore nodes.conf from nodes.conf.bak"
+        cp /tmp/nodes.conf.bak ${REDIS_DIR}/${PORT}/data/nodes.conf
+        mv /tmp/nodes.conf.bak ${REDIS_DIR}/${PORT}/data/nodes.conf.bak
     else
+        echo "Nodes.conf.bak is not found, redis cluster will be recreated."
+        echo "Clean the data folder(${REDIS_DIR}/${PORT}/data)"
         rm -rf ${REDIS_DIR}/${PORT}/data/*
     fi
 
+    echo "Clean the redis log(${REDIS_DIR}/${PORT}/logs)"
     rm -rf ${REDIS_DIR}/${PORT}/logs/*
   {{- end }}
     ((counter++))
