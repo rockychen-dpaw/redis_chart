@@ -962,6 +962,7 @@ then
 fi
 {{- end }} # the end of "check the clusters one by one"
 
+echo "Succeed to start all redis servers"
 /bin/bash
 exit 0
 {{- end }} # the end of "define "redis.start_redis"
