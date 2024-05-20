@@ -14,19 +14,27 @@ SERVERS={{ $.Values.redis.servers | default 1 | int }}
 counter=1
 while [[ $counter -le $SERVERS ]]
 do
-    {{- if eq $servers 1 }}
-    rm -rf ${REDIS_DIR}/data/*
-    if [[ -f ${REDIS_DIR}/conf/nodes.conf ]];then
-        cp ${REDIS_DIR}/conf/nodes.conf  ${REDIS_DIR}/data
+  {{- if eq $servers 1 }}
+    if [[ -f ${REDIS_DIR}/data/nodes.conf.bak ]];then
+        cp ${REDIS_DIR}/data/nodes.conf.bak /tmp/nodes.conf
+        rm -rf ${REDIS_DIR}/data/*
+        mv /tmp/nodes.conf ${REDIS_DIR}/data/nodes.conf
+    else
+        rm -rf ${REDIS_DIR}/data/*
     fi
+
     rm -rf ${REDIS_DIR}/logs/*
-    {{- else }}
-    rm -rf ${REDIS_DIR}/${PORT}/data/*
-    if [[ -f ${REDIS_DIR}/${PORT}/conf/nodes.conf ]];then
-        cp ${REDIS_DIR}/${PORT}/conf/nodes.conf  ${REDIS_DIR}/${PORT}/data
+  {{- else }}
+    if [[ -f ${REDIS_DIR}/${PORT}/data/nodes.conf.bak ]];then
+        cp ${REDIS_DIR}/${PORT}/data/nodes.conf.bak /tmp/nodes.conf
+        rm -rf ${REDIS_DIR}/${PORT}/data/*
+        mv /tmp/nodes.conf ${REDIS_DIR}/${PORT}/data/nodes.conf
+    else
+        rm -rf ${REDIS_DIR}/${PORT}/data/*
     fi
+
     rm -rf ${REDIS_DIR}/${PORT}/logs/*
-    {{- end }}
+  {{- end }}
     ((counter++))
     ((PORT++))
 done

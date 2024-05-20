@@ -373,6 +373,86 @@ do
     ((PORT++))
 done
 
+function wait_until_rediscluster_in_initial_status(){
+   #check whether the redis cluster has the initial status
+   while [[ true ]]
+   do
+       
+       index=0
+       succeed=1
+       while [[ $index -lt $cluster_size ]]
+       do
+           redis_host=${cluster_nodes[$(( $index * 3 ))]}
+           redis_server=${cluster_nodes[$(( $index * 3 + 1 ))]}
+           redis_port=${cluster_nodes[$(( $index * 3 + 2 ))]}
+
+           if [[ "${PASSWORDS["${redis_port}"]}" == "" ]];then
+               res=$(redis-cli -h ${redis_host} -p ${redis_port} cluster info 2>&1)
+           else
+               res=$(echo ${PASSWORDS["${redis_port}"]} | redis-cli --askpass -h ${redis_host} -p ${redis_port} cluster info 2>&1)
+           fi
+           status=$?
+           if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]];then
+               echo "The redis server(${redis_host}:${redis_port}) is not running,status=${status}"
+               succeed=0
+               break
+           fi
+           if [[ $res ==  *ERR* ]];then
+               echo "The redis server(${redis_host}:${redis_port}) does not support cluster feature"
+               succeed=0
+               break
+           fi
+           res=$(echo "$res" | grep "cluster_state")
+           if [[ $res != *cluster_state:ok* ]];then
+               echo "The redis server(${redis_host}:${redis_port}) was still not added to the redis cluster(${cluster_name})."
+               succeed=0
+               break
+           fi
+
+           if [[ ${index} -lt ${cluster_groups} ]];then
+               should_be_master=1
+           else
+               should_be_master=0
+           fi
+           if [[ "${PASSWORDS["${redis_port}"]}" == "" ]];then
+               res=$(redis-cli -h ${redis_host} -p ${redis_port} cluster nodes 2>&1)
+           else
+               res=$(echo ${PASSWORDS["${redis_port}"]} | redis-cli --askpass -h ${redis_host} -p ${redis_port} cluster nodes 2>&1)
+           fi
+           status=$?
+           if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]];then
+               # "The redis server(${redis_host}:${redis_port}) is not running,status=${status}"
+               succeed=0
+               break
+           fi
+           is_master=$(echo -e "$res" | grep "myself" | grep "master" | wc -l )
+           if [[ ${is_master} -ne ${should_be_master} ]];then
+               #the current server is not in the initial status,wait
+               if [[ ${is_master} -eq 1 ]];then
+                   echo "The server(${redis_host}:${redis_port}) is master, but it is configured as slave.can't backup the nodes.conf right now."
+               else
+                   echo "The server(${redis_host}:${redis_port}) is slave, but it is configured as master.can't backup the nodes.conf right now."
+               fi
+               succeed=0
+               break
+           else
+               if [[ ${is_master} -eq 1 ]];then
+                   echo "The server(${redis_host}:${redis_port}) is master, and it is also configured as master."
+               else
+                   echo "The server(${redis_host}:${redis_port}) is slave, and it is configured as slave"
+               fi
+           fi
+           ((index++))
+       done
+       if [[ ${succeed} -eq 0 ]];then
+           #failed
+           sleep 60
+           continue
+       fi
+       break
+   done
+}
+
 function check_related_clusters(){
     #check whether the related clusters are created.
     #return 0: redis cluster was created
@@ -420,89 +500,20 @@ function check_related_clusters(){
                 if [[ $res = *cluster_state:ok* ]]
                 then
                     echo "The redis cluster(${cluster_name}) has alreay been created."
-                    if [[ ! -f ${serverdir}/conf/${HOSTNAME}/nodes.conf ]];then
+                    if [[ ! -f ${serverdir}/data/nodes.conf.bak ]];then
                        #nodes.conf is not backup before,backup now
 
-                       #check whether the redis cluster has the initial status
-                       while [[ true ]]
-                       do
-                           
-                           index=0
-                           succeed=1
-                           while [[ $index -lt $cluster_size ]]
-                           do
-                               redis_host=${cluster_nodes[$(( $index * 3 ))]}
-                               redis_server=${cluster_nodes[$(( $index * 3 + 1 ))]}
-                               redis_port=${cluster_nodes[$(( $index * 3 + 2 ))]}
-
-                               if [[ "${PASSWORDS["${redis_port}"]}" == "" ]];then
-                                   res=$(redis-cli -h ${redis_server} -p ${redis_port} cluster info 2>&1)
-                               else
-                                   res=$(echo ${PASSWORDS["${redis_port}"]} | redis-cli --askpass -h ${redis_server} -p ${redis_port} cluster info 2>&1)
-                               fi
-                               status=$?
-                               if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]];then
-                                   echo "The redis server(${redis_server}:${redis_port}) is not running,status=${status}"
-                                   succeed=0
-                                   break
-                               fi
-                               if [[ $res ==  *ERR* ]];then
-                                   echo "The redis server(${redis_server}:${redis_port}) does not support cluster feature"
-                                   succeed=0
-                                   break
-                               fi
-                               res=$(echo "$res" | grep "cluster_state")
-                               if [[ $res != *cluster_state:ok* ]];then
-                                   echo "The redis server(${redis_server}:${redis_port}) was still not added to the redis cluster(${cluster_name})."
-                                   succeed=0
-                                   break
-                               fi
-
-                               if [[ ${index} -lt ${cluster_groups} ]];then
-                                   should_be_master=1
-                               else
-                                   should_be_master=0
-                               fi
-                               if [[ "${PASSWORDS["${redis_port}"]}" == "" ]];then
-                                   res=$(redis-cli -h ${redis_server} -p ${redis_port} cluster nodes 2>&1)
-                               else
-                                   res=$(echo ${PASSWORDS["${redis_port}"]} | redis-cli --askpass -h ${redis_server} -p ${redis_port} cluster nodes 2>&1)
-                               fi
-                               status=$?
-                               if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]];then
-                                   # "The redis server(${redis_server}:${redis_port}) is not running,status=${status}"
-                                   succeed=0
-                                   break
-                               fi
-                               is_master=$(echo -e "$res" | grep "myself" | grep "master" | wc -l )
-                               if [[ ${is_master} -ne ${should_be_master} ]];then
-                                   #the current server is not in the initial status,wait
-                                   if [[ ${is_master} -eq 1 ]];then
-                                       echo "The server(${redis_server}:${redis_port}) is master, but it is configured as slave.can't backup the nodes.conf right now."
-                                   else
-                                       echo "The server(${redis_server}:${redis_port}) is slave, but it is configured as master.can't backup the nodes.conf right now."
-                                   fi
-                                   succeed=0
-                                   break
-                               else
-                                   if [[ ${is_master} -eq 1 ]];then
-                                       echo "The server(${redis_server}:${redis_port}) is master, but it is also configured as master."
-                                   else
-                                       echo "The server(${redis_server}:${redis_port}) is slave, but it is configured as slave"
-                                   fi
-                               fi
-                               ((index++))
-                           done
-                           if [[ ${succeed} -eq 0 ]];then
-                               #failed
-                               sleep 60
-                               continue
-                           fi
-                           break
-                       done
+                       #wait until the redis cluster is in the initial status
+                       wait_until_rediscluster_in_initial_status
 
                        echo "All redis servers are in initial status, backup the nodes.conf"
-                       cp ${serverdir}/data/nodes.conf ${serverdir}/conf/${HOSTNAME}
+                       cp ${serverdir}/data/nodes.conf ${serverdir}/data/nodes.conf.bak
+                       if [[ $? -eq 0 ]];then
+                           echo "Succeed to backup the nodes.conf to ${serverdir}/data/nodes.conf.bak"
+                       else
+                           echo "Failed to backup the nodes.conf"
+                           rm -f ${serverdir}/data/nodes.conf.bak
+                       fi
                     fi
                     return 0
                 fi
@@ -526,33 +537,20 @@ function check_related_clusters(){
                     echo "The redis cluster(${cluster_name}) is not created. create it now.status=${res}"
                     return 1
                 else
-                    echo "The redis cluster(${cluster_name}) is not created. let the node(${cluster_nodes[0]}) create it"
-                    #wait the first node to create the redis cluster
-                    while [[ true ]]
-                    do
-                        if [[ "${PASSWORDS["$port"]}" == "" ]]
-                        then
-                            res=$(redis-cli  -p ${port} cluster info 2>&1)
-                        else
-                            res=$(echo ${PASSWORDS["$port"]} | redis-cli --askpass -p $port cluster info 2>&1)
-                        fi
-                        status=$?
-                        if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]]
-                        then
-                            sleep 1
-                            continue
-                        fi
-                        res=$(echo "$res" | grep "cluster_state")
-                        if [[ $res = *cluster_state:ok* ]]
-                        then
-                            #redis cluster was created
-                            break
-                        fi
-                        sleep 1
-                    done
-                    #redis cluster was create , backup the nodes file, 
+                    echo "The redis cluster(${cluster_name}) is not created. wait the node(${cluster_nodes[0]}) to create it"
+
+                    #wait until the redis cluster is in the initial status
+                    wait_until_rediscluster_in_initial_status
+
+                    echo "redis cluster was create , backup the nodes file" 
                     #this is the first chance to backup the nodes file for the non first node
-                    cp -f ${serverdir}/data/nodes.conf ${serverdir}/conf/${HOSTNAME}
+                    cp -f ${serverdir}/data/nodes.conf ${serverdir}/data/nodes.conf.bak
+                    if [[ $? -eq 0 ]];then
+                        echo "Succeed to backup the nodes.conf to ${serverdir}/data/nodes.conf.bak"
+                    else
+                        echo "Failed to backup the nodes.conf"
+                        rm -f ${serverdir}/data/nodes.conf.bak
+                    fi
                     return 2
                 fi
             done
@@ -830,6 +828,7 @@ then
             fi
             ((index++))
         done
+
         #backup the nodes.conf
         #this is the first chance to backup the nodes file for the first node
         {{- if eq $servers 1 }}
@@ -838,7 +837,13 @@ then
         port=${cluster_nodes[2]}
         serverdir="${REDIS_DIR}/${port}"
         {{- end }}
-        cp -f ${serverdir}/data/nodes.conf ${serverdir}/conf/${HOSTNAME}
+        cp -f ${serverdir}/data/nodes.conf ${serverdir}/data/nodes.conf.bak
+        if [[ $? -eq 0 ]];then
+            echo "Succeed to backup the nodes.conf to ${serverdir}/data/nodes.conf.bak"
+        else
+            echo "Failed to backup the nodes.conf"
+            rm -f ${serverdir}/data/nodes.conf.bak
+        fi
     fi
 fi
 {{- end }} # the end of "check the clusters one by one"
