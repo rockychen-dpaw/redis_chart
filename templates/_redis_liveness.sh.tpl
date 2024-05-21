@@ -83,6 +83,8 @@ declare -a {{ $redis_cluster.name}}_nodes
 {{ $redis_cluster.name}}_slaves={{ $redis_cluster.clusterReplicas | default 1 }}
 {{ $redis_cluster.name}}_groups={{ div $cluster_size (add ($redis_cluster.clusterReplicas | default 1) 1) | int }}
 {{ $redis_cluster.name}}_persistent={{ $persistent }}
+{{ $redis_cluster.name}}_reset_start={{ $redis_cluster.resetStart | default 0 }}
+{{ $redis_cluster.name}}_reset_end={{ $redis_cluster.resetEnd | default 24 }}
 {{- if ($redis_cluster.resetMasterNodes | default false) }}
 {{ $redis_cluster.name}}_reset_masternodes=1
 {{- else }}

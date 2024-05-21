@@ -5,6 +5,14 @@
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REDIS_DIR=$( cd -- "$( dirname -- "${SCRIPT_DIR}" )" &> /dev/null && pwd )
 
+#reset redis if required
+${SCRIPT_DIR}/reset_redis
+recreate_cluster=$?
+
+starttime=$(date +"%s")
+
+echo "Begin to start redis servers."
+
 PORT={{ $.Values.redis.port | default 6379 | int }}
 SERVERS={{ $.Values.redis.servers | default 1 | int }}
 
@@ -84,6 +92,8 @@ declare -a {{ $redis_cluster.name}}_nodes
 {{ $redis_cluster.name}}_slaves={{ $redis_cluster.clusterReplicas | default 1 }}
 {{ $redis_cluster.name}}_groups={{ div $cluster_size (add ($redis_cluster.clusterReplicas | default 1) 1) | int }}
 {{ $redis_cluster.name}}_persistent={{ $persistent }}
+{{ $redis_cluster.name}}_reset_start={{ $redis_cluster.resetStart | default 0 }}
+{{ $redis_cluster.name}}_reset_end={{ $redis_cluster.resetEnd | default 24 }}
 {{- if ($redis_cluster.resetMasterNodes | default false) }}
 {{ $redis_cluster.name}}_reset_masternodes=1
 {{- else }}
@@ -485,6 +495,13 @@ do
     ((counter++))
     ((PORT++))
 done
+echo "Succeed to start all redis servers"
+
+#==========================================================================
+if [[ $recreate_cluster -eq 1 ]];then
+    echo "Some redis clusters are removed and need to be recreated. wait {{ div ($.Values.redis.startupTime | default 300 | int) 60 }} minutes to let other redis servers finish the clean task"
+    sleep {{ $.Values.redis.startupTime | default 300 | int }}
+fi
 
 function wait_until_rediscluster_in_initial_status(){
    #check whether the redis cluster has the initial status
@@ -575,6 +592,7 @@ function check_related_clusters(){
     #return 3: redis server is not belonging to any redis cluster
     #return 128, check failed
     local server=""
+    local host=""
     local port=0
     local index=0
     index=0
@@ -614,21 +632,6 @@ function check_related_clusters(){
                 if [[ $res = *cluster_state:ok* ]]
                 then
                     echo "The redis cluster(${cluster_name}) has alreay been created."
-                    if [[ ! -f ${serverdir}/data/nodes.conf.bak ]];then
-                       #nodes.conf is not backup before,backup now
-
-                       #wait until the redis cluster is in the initial status
-                       wait_until_rediscluster_in_initial_status
-
-                       echo "All redis servers are in initial status, backup the nodes.conf"
-                       cp ${serverdir}/data/nodes.conf ${serverdir}/data/nodes.conf.bak
-                       if [[ $? -eq 0 ]];then
-                           echo "Succeed to backup the nodes.conf to ${serverdir}/data/nodes.conf.bak"
-                       else
-                           echo "Failed to backup the nodes.conf"
-                           rm -f ${serverdir}/data/nodes.conf.bak
-                       fi
-                    fi
                     return 0
                 fi
 
@@ -962,7 +965,70 @@ then
 fi
 {{- end }} # the end of "check the clusters one by one"
 
-echo "Succeed to start all redis servers"
+#backup the nodes.conf if not backup before
+function backup_nodes_conf_if_required(){
+    #check whether the related clusters are created.
+    #return 0: succeed
+    #return 128, check failed
+    local host=""
+    local port=0
+    local index=0
+    index=0
+    while [[ $index -lt $cluster_size ]]
+    do
+        host=${cluster_nodes[$(( $index * 3 ))]}
+        port=${cluster_nodes[$(( $index * 3 + 2 ))]}
+        {{- if eq $servers 1 }}
+        serverdir="${REDIS_DIR}"
+        {{- else }}
+        serverdir="${REDIS_DIR}/${port}"
+        {{- end }}
+        if [[ "${host}" == "${HOSTNAME}" ]];then
+            if [[ ! -f ${serverdir}/data/nodes.conf.bak ]];then
+               #nodes.conf is not backup before,backup now
+               #wait up to 10 minutes to let redis pod instances startup
+               now=$(date +"%s")
+               waittime=$((600 + starttime - now))
+               if [[ ${waittime} -gt 0 ]];then
+                   echo "Wait ${waittime} seconds to let all redis pod instances start before trying to backup nodes.conf"
+                   sleep $waittime
+               fi
+               echo "Start to check whether the redis cluster is in initial status before trying to backup nodes.conf"
+
+               #wait until the redis cluster is in the initial status
+               wait_until_rediscluster_in_initial_status
+
+               echo "All redis servers are in initial status, backup the nodes.conf"
+               cp ${serverdir}/data/nodes.conf ${serverdir}/data/nodes.conf.bak
+               if [[ $? -eq 0 ]];then
+                   echo "Succeed to backup the nodes.conf to ${serverdir}/data/nodes.conf.bak"
+               else
+                   echo "Failed to backup the nodes.conf"
+                   rm -f ${serverdir}/data/nodes.conf.bak
+               fi
+            fi
+        fi
+        ((index++))
+    done
+    return 0
+}
+
+echo "Succeed to create and start all redis clusters"
+
+echo "Begin to backup nodes.conf if not backup before"
+{{- range $i,$redis_cluster := $.Values.redis.redisClusters | default dict }}
+cluster_name={{ print "${" $redis_cluster.name "_name}" }}
+cluster_nodes={{ print "( \"${" $redis_cluster.name "_nodes[@]}\" )" }}
+cluster_size={{ print "${" $redis_cluster.name "_size}" }}
+cluster_slaves={{ print "${" $redis_cluster.name "_slaves}" }}
+cluster_groups={{ print "${" $redis_cluster.name "_groups}" }}
+cluster_persistent={{ print "${" $redis_cluster.name "_persistent}" }}
+backup_nodes_conf_if_required
+
+{{- end }} 
+
+echo "End to backup nodes.conf"
+
 /bin/bash
 exit 0
 {{- end }} # the end of "define "redis.start_redis"
