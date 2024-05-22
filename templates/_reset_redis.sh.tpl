@@ -11,6 +11,8 @@
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REDIS_DIR=$( cd -- "$( dirname -- "${SCRIPT_DIR}" )" &> /dev/null && pwd )
 
+source ${SCRIPT_DIR}/functions
+
 PORT={{ $.Values.redis.port | default 6379 | int }}
 SERVERS={{ $.Values.redis.servers | default 1 | int }}
 {{- $servers := $.Values.redis.servers | default 1 | int }}
@@ -51,76 +53,43 @@ do
     if [[ -f ${serverdir}/data/redis_reset ]];then
         reset_time=$(date -f ${serverdir}/data/redis_reset +"%s")
         if [[ $? -ne 0 ]];then
-            echo "Redis Server(${PORT}) : Latest redis reset time($(cat ${serverdir}/data/redis_reset)) is invalid."
+            log "${serverdir}" "Redis Server(${PORT}) : Latest redis reset time($(cat ${serverdir}/data/redis_reset)) is invalid."
             reset_time=0
         fi
         if [[ ${reset_time} -gt ${release_time} ]];then
-            echo "Redis Server(${PORT}) : Requested to reset at ${RELEASE_TIME}, but it has already been reset at $(cat ${serverdir}/data/redis_reset)"
+            log "${serverdir}" "Redis Server(${PORT}) : Requested to reset at ${RELEASE_TIME}, but it has already been reset at $(cat ${serverdir}/data/redis_reset)"
             ((counter++))
             ((PORT++))
             continue
         fi
     fi
-    if [[ "${reset_redis[${counter}]}" == "ALL" ]]; then
-        #redis cluster are required to be recreated if have
-        if [[ -f ${serverdir}/data/nodes.conf ]];then
-            #redis cluster was created, will be removed and recreated
-            recreate_cluster=1
-        fi
-
-    fi
-
-    #backup the nodes.conf if required
-    if [[ "${reset_redis[${counter}]}" == "DATA" ]] || [[ "${reset_redis[${counter}]}" == "DATA_AND_LOG" ]]; then
-        if [[ -f ${serverdir}/data/nodes.conf ]];then
-            echo "Redis Server(${PORT}) : Backup nodes.conf to /tmp/nodes_${PORT}.conf"
-            cp ${serverdir}/data/nodes.conf /tmp/nodes_${PORT}.conf
-        else
-            echo "Redis Server(${PORT}) : Nodes.conf is not found, redis cluster will be recreated."
-        fi
-        if [[ -f ${serverdir}/data/nodes.conf.bak ]];then
-            echo "Redis Server(${PORT}) : Backup nodes.conf.bak to /tmp/nodes_${PORT}.conf.bak."
-            cp ${serverdir}/data/nodes.conf.bak /tmp/nodes_${PORT}.conf.bak
-        else
-            echo "Redis Server(${PORT}) : Nodes.conf.bak is not found"
-        fi
-    fi
-    if [[ "${reset_redis[${counter}]}" == "NODES" ]]; then
-        if [[ -f ${serverdir}/data/nodes.conf.bak ]];then
-            echo "Redis Server(${PORT}) : Backup the nodes.conf.bak to /tmp/nodes_${PORT}.conf.bak."
-            cp ${serverdir}/data/nodes.conf.bak /tmp/nodes_${PORT}.conf.bak
-        else
-            echo "Redis Server(${PORT}) : Nodes.conf.bak is not found, redis cluster will be recreated."
-        fi
-    fi
-  
     #delete the data  if required
     if [[ "${reset_redis[${counter}]}" == "DATA" ]] || [[ "${reset_redis[${counter}]}" == "DATA_AND_LOG" ]] || [[ "${reset_redis[${counter}]}" == "NODES" ]] || [[ "${reset_redis[${counter}]}" == "ALL" ]]; then
-        echo "Redis Server(${PORT}) : Clean the data folder(${serverdir}/data)"
-        rm -rf ${serverdir}/data/*
+        log  "${serverdir}" "Redis Server(${PORT}) : Clean all persistent data"
+        rm -rf ${serverdir}/data/appendonlydir/*
+        rm -rf ${serverdir}/data/dump.rdb
     fi
 
     #restore the nodes.conf if required
-    if [[ "${reset_redis[${counter}]}" == "DATA" ]] || [[ "${reset_redis[${counter}]}" == "DATA_AND_LOG" ]]; then
-        if [[ -f /tmp/nodes_${PORT}.conf ]];then
-            cp /tmp/nodes_${PORT}.conf ${serverdir}/data/nodes.conf
+    if [[ "${reset_redis[${counter}]}" == "NODES" ]]; then
+        if [[ -f ${serverdir}/data/nodes.conf.bak ]];then
+            log "${serverdir}" "Redis Server(${PORT}) : Restore the nodes.conf from ${serverdir}/data/nodes.conf.bak"
+            cp -f ${serverdir}/data/nodes.conf.bak ${serverdir}/data/nodes.conf
+        else
+            log "${serverdir}" "Redis Server(${PORT}) : The file(${serverdir}/data/nodes.conf.bak) doesn't exist, recreate the redis cluster if needed"
         fi
-        if [[ -f /tmp/nodes_${PORT}.conf.bak ]];then
-            mv /tmp/nodes_${PORT}.conf.bak ${serverdir}/data/nodes.conf.bak
-        fi
+        recreate_cluster=1
+    elif [[ "${reset_redis[${counter}]}" == "ALL" ]]; then
+        #redis cluster are required to be recreated if have
+        log "${serverdir}" "Redis Server(${PORT}) : Remove the files nodes.conf and nodes.conf.bak to recreate the redis cluster"
+        recreate_cluster=1
+        rm -rf ${serverdir}/data/nodes.conf
+        rm -f ${serverdir}/data/nodes.conf.bak
     fi
 
-    if [[ "${reset_redis[${counter}]}" == "NODES" ]]; then
-        if [[ -f /tmp/nodes_${PORT}.conf.bak ]];then
-            echo "Redis Server(${PORT}) : Restore nodes.conf from nodes.conf.bak"
-            cp /tmp/nodes_${PORT}.conf.bak ${serverdir}/data/nodes.conf
-            mv /tmp/nodes_${PORT}.conf.bak ${serverdir}/data/nodes.conf.bak
-        fi
-    fi
-  
     #delete logs if required
     if [[ "${reset_redis[${counter}]}" == "LOG" ]] || [[ "${reset_redis[${counter}]}" == "DATA_AND_LOG" ]] || [[ "${reset_redis[${counter}]}" == "NODES" ]] || [[ "${reset_redis[${counter}]}" == "ALL" ]]; then
-        echo "Redis Server(${PORT}) : Clean the redis log(${serverdir}/logs)"
+        log "${serverdir}" "Redis Server(${PORT}) : Clean all redis logs(${serverdir}/logs)"
         rm -rf ${serverdir}/logs/*
     fi
 

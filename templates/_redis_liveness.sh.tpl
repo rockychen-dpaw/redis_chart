@@ -197,7 +197,7 @@ do
     {{- range $i,$redis_cluster := $.Values.redis.redisClusters | default dict }}
     #check whether the current redis server is a master server
     is_master=0
-    if [[ {{ print "${" $redis_cluster.name "_"}}reset_master} -eq 1 ]] && [[ ${hour} -ge {{ print "${" $redis_cluster.name "_"}}reset_start} ]] && [[ ${hour} -lt {{ print "${" $redis_cluster.name "_"}}reset_end} ]]
+    if [[ {{ print "${" $redis_cluster.name "_"}}reset_masternodes} -eq 1 ]] && [[ ${hour} -ge {{ print "${" $redis_cluster.name "_"}}reset_start} ]] && [[ ${hour} -lt {{ print "${" $redis_cluster.name "_"}}reset_end} ]]
     then
         #reset master nodes enabled
         index=0
@@ -304,8 +304,7 @@ do
     {{- end }}
     if [[ ${is_checked} -eq 0 ]]
     then
-        #not checked before, means this redis server is not belonging to a redis cluster or it is not a master 
-        check whether it is online 
+        #not checked before, means this redis server is not belonging to a redis cluster or it is not a master, check whether it is online 
         if [[ "${PASSWORDS["$PORT"]}" == "" ]]
         then
             res=$(redis-cli -p $PORT ping 2>&1)

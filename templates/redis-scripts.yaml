@@ -14,3 +14,5 @@ binaryData:
 {{ include "redis.redis_startup" . | b64enc | indent 4 }}
   redis_liveness: >- 
 {{ include "redis.redis_liveness" . | b64enc | indent 4 }}
+  functions: >- 
+{{ include "redis.functions" . | b64enc | indent 4 }}

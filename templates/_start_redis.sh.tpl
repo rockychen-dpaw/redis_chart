@@ -5,6 +5,49 @@
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REDIS_DIR=$( cd -- "$( dirname -- "${SCRIPT_DIR}" )" &> /dev/null && pwd )
 
+source ${SCRIPT_DIR}/functions
+
+{{- $servers := $.Values.redis.servers | default 1 | int }}
+
+PORT={{ $.Values.redis.port | default 6379 | int }}
+SERVERS={{ $.Values.redis.servers | default 1 | int }}
+
+#create the redis_start file for debug
+counter=0
+redis_start_file="redis_started_at_$(date +'%Y%m%d-%H%M%S')"
+export redis_start_file
+maxfiles={{ $.Values.redis.maxstartatfiles | default 30 }}
+while [[ $counter -lt $SERVERS ]]
+do
+    #create a startup file for later checking
+  {{- if eq $servers 1 }}
+    serverdir="${REDIS_DIR}"
+  {{- else }}
+    serverdir="${REDIS_DIR}/${PORT}"
+  {{- end }}
+    file=${serverdir}/data/${redis_start_file}
+    touch ${file}
+    echo "create file ${file}"
+
+    #manage the redis_started_at files, only keep the latest configured number of startup files.
+    res=$(ls "${serverdir}/data" | sort -rs )
+    index=0
+    while IFS= read -r file
+    do
+        if [[ ${file} = redis_started_at_* ]]
+        then
+            ((index++))
+            if [[ ${index} -gt ${maxfiles} ]]
+            then
+               #delete the outdated startup files
+               rm -f "${serverdir}/data/${file}"
+            fi
+        fi
+    done <<< "${res}"
+    ((counter++))
+    ((PORT++))
+done
+
 #reset redis if required
 ${SCRIPT_DIR}/reset_redis
 recreate_cluster=$?
@@ -14,9 +57,7 @@ starttime=$(date +"%s")
 echo "Begin to start redis servers."
 
 PORT={{ $.Values.redis.port | default 6379 | int }}
-SERVERS={{ $.Values.redis.servers | default 1 | int }}
 
-{{- $servers := $.Values.redis.servers | default 1 | int }}
 
 {{- $cluster_size := 0 }}
 {{- $cluster_groups := 0 }}
@@ -131,11 +172,10 @@ firstlogfile="redis_${day}-000000.log"
 
 function start_redis(){
     #start the redis server, if failed,  return 128
+    log "${serverdir}" "Redis Server(${PORT}) : Start the redis server"
     {{- if eq $replicas 1 }}
-    echo "Start the redis server: redis-server ${serverdir}/conf/redis.conf"
     res=$(redis-server ${serverdir}/conf/redis.conf)
     {{- else }}
-    echo "Start the redis server: redis-server ${serverdir}/conf/${HOSTNAME}/redis.conf"
     res=$(redis-server ${serverdir}/conf/${HOSTNAME}/redis.conf)
     {{- end }}
     if [[ $? -ne 0 ]]
@@ -143,7 +183,7 @@ function start_redis(){
         return 128
     fi
 
-    echo "Check whether the redis server(127.0.0.1:${PORT}) is started successfully..."
+    log "${serverdir}" "Redis Server(${PORT}) : Check whether the redis server is started successfully..."
     #try 5 times, check interval is 1 second
     attempts=5
     while [[ true ]]
@@ -158,30 +198,7 @@ function start_redis(){
         if [[ $status -eq 0 ]] && [[ "${res}" = "PONG" ]]
         then
             #redis is online and ready to use
-            echo "The redis server(127.0.0.1:${PORT}) is ready to use."
-            #create a startup file for later checking
-            file=${serverdir}/data/redis_started_at_$(date +"%Y%m%d-%H%M%S")
-            touch ${file}
-            echo "create file ${file}"
-
-            #manage the redis_started_at files, only keep the latest configured number of startup files.
-            res=$(ls "${serverdir}/data" | sort -rs )
-            maxfiles={{ $.Values.redis.maxstartatfiles | default 30 }}
-            index=0
-            while IFS= read -r file
-            do
-                if [[ ${file} = redis_started_at_* ]]
-                then
-                    ((index++))
-                    if [[ ${index} -gt ${maxfiles} ]]
-                    then
-                       #delete the outdated startup files
-                       rm -f "${serverdir}/data/${file}"
-                    fi
-                fi
-            done <<< "${res}"
-
-            echo "The redis server(127.0.0.1:${PORT}) is ready to use."
+            log "${serverdir}" "Redis Server(${PORT}) : The redis server is ready to use"
             return 0
         fi
         if [[ ${attempts} -eq -1 ]]
@@ -193,12 +210,10 @@ function start_redis(){
             sleep 1
             ((attempts--))
         else
-            echo "Failed to start the redis server(127.0.0.1:${PORT})."
+            log "${serverdir}" "Redis Server(${PORT}) : Failed to start the redis server"
             return 128
         fi
     done
-    echo "Failed to start the redis server(127.0.0.1:${PORT})."
-    return 128
 }
 
 function switch_one_slave_to_master(){
@@ -252,7 +267,7 @@ function switch_one_slave_to_master(){
         #switch the master server
         new_master_server=${cluster_nodes[$(( $new_master_index * 3 + 1 ))]}
         new_master_port=${cluster_nodes[$(( $new_master_index * 3 + 2 ))]}
-        echo "The cluster(${cluster_name}) has no online master node right now.try to switch the server(${new_master_server}:${new_master_port}) to master."
+        log "${serverdir}" "Redis Server(${PORT}) : The cluster(${cluster_name}) has no online master node right now.try to switch the server(${new_master_server}:${new_master_port}) to master."
         if [[ "${PASSWORDS["${new_master_port}"]}" == "" ]]
         then
             res=$(redis-cli -h ${new_master_server} -p ${new_master_port} cluster failover takeover 2>&1)
@@ -262,7 +277,7 @@ function switch_one_slave_to_master(){
         status=$?
         if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ $res = *ERR* ]]
         then 
-            echo "Failed to switch the server(${new_master_server}:${new_master_port}) to master node."
+            log "${serverdir}" "Redis Server(${PORT}) : Failed to switch the server(${new_master_server}:${new_master_port}) to master node."
             return 128
         else
             #check whether switch is succeed or not.
@@ -289,7 +304,7 @@ function switch_one_slave_to_master(){
                         is_master=$(echo -e "$res" | grep "myself" | grep "master" | wc -l )
                         if [[ ${is_master} -eq 1 ]]
                         then
-                            echo "Succeed to switch the server(${new_master_server}:${new_master_port}) to master node."
+                            log "${serverdir}" "Redis Server(${PORT}) : Succeed to switch the server(${new_master_server}:${new_master_port}) to master node."
                             return 1
                         else
                             msg="Failed to switch the server(${new_master_server}:${new_master_port}) to master node."
@@ -301,7 +316,7 @@ function switch_one_slave_to_master(){
                 then
                     sleep 1
                 else
-                    echo ${msg}
+                    log "${serverdir}" "Redis Server(${PORT}) : ${msg}"
                     return 128
                 fi
             done
@@ -314,6 +329,11 @@ function switch_one_slave_to_master(){
 counter=1
 while [[ $counter -le $SERVERS ]]
 do
+    {{- if eq $servers 1 }}
+    serverdir="${REDIS_DIR}"
+    {{- else }}
+    serverdir="${REDIS_DIR}/${PORT}"
+    {{- end }}
     #check whether redis server is online or not
     if [[ "${PASSWORDS["$PORT"]}" == "" ]]
     then
@@ -362,10 +382,10 @@ do
 
         if [[ ${clusternode_index} -ge 0 ]]
         then
-            echo "The redis server(127.0.0.1:${PORT}) has joined the redis cluster({${cluster_name}})"
+            log "${serverdir}" "Redis Server(${PORT}) : The redis server has joined the redis cluster({${cluster_name}})"
             if [[ ${cluster_persistent} -eq 0 ]]
             then
-                echo "The redis cluster($cluster_name) doesn't support persistent, try to choose a slave node as new master node"
+                log "${serverdir}" "Redis Server(${PORT}) : The redis cluster($cluster_name) doesn't support persistent, try to choose a slave node as new master node"
                 switch_one_slave_to_master
                 status=$?
                 if [[ $status -lt 128 ]]
@@ -377,17 +397,12 @@ do
                     switched=0
                 fi
             else
-                echo "The redis cluster($cluster_name) supports persistent, no need to switch the slave node to master node at this stage"
+                log "${serverdir}" "Redis Server(${PORT}) : The redis cluster($cluster_name) supports persistent, no need to switch the slave node to master node at this stage"
                 switched=0
             fi
         fi
 
         #create a daily based redis log file and use soft link to link the log file to redislog file
-        {{- if eq $servers 1 }}
-        serverdir="${REDIS_DIR}"
-        {{- else }}
-        serverdir="${REDIS_DIR}/${PORT}"
-        {{- end }}
         redislog="${serverdir}/logs/redis.log"
         if [[ -f "${redislog}" ]] && ! [[ -L "${redislog}" ]]
         then
@@ -448,33 +463,34 @@ do
                 #corrupted append only file, try to fix it
                 # try to fix the append only file if not in cluster mode
                 succeed=1
+                log "${serverdir}" "Redis Server(${PORT}) : Start failed; The redis server is a standalond server,try to fix the append only files."
                 for f in "${data_dir}"/*
                 do
                     if [[ ${f} == *appendonly.aof.manifest ]]
                     then
                         continue
                     fi
-                    echo "Check and fix the aof file(${f}) if required"
+                    log "${serverdir}" "Redis Server(${PORT}) : Check and fix the aof file(${f}) if required"
                     echo "y" | redis-check-aof --fix "${f}"
                     if [[ $? -ne 0 ]]
                     then
-                        echo "Failed to fix the file(${f})"
+                        log "${serverdir}" "Redis Server(${PORT}) : Failed to fix the file(${f})"
                         succeed=0
                     else
-                        echo "The file(${f}) is valid or was fixed successfully"
+                        log "${serverdir}" "Redis Server(${PORT}) : The file(${f}) is valid or was fixed successfully"
                     fi
                 done
                 if [[ ${succeed} -eq 0 ]] && [[ ${CLEAR_IF_FIX_FAILED["$PORT"]} -eq 1 ]]
                 then
                     #failed to fix the aof file, remove all aof files
-                    echo "Remove all aof file from folder ${data_dir}"
+                    log "${serverdir}" "Redis Server(${PORT}) : Failed to fix some append only files. Remove all aof file from folder ${data_dir}"
                     rm -rf ${data_dir}/*
                 fi
             elif [[ ${CLEAR_IF_FIX_FAILED["$PORT"]} -eq 1 ]]
             then
                 #the redis server is belonging to a redis cluster, 
                 #remove all aof files
-                echo "Remove all aof file from folder ${data_dir}"
+                log "${serverdir}" "Redis Server(${PORT}) : Start failed; The redis server is a cluster node,  remove all aof file from folder ${data_dir}"
                 rm -rf ${data_dir}/*
             else
                 #can not start the redis server
@@ -484,13 +500,13 @@ do
             if [[ ${clusternode_index} -ge 0 ]] && [[ ${switched} -eq 0 ]]
             then
                 #in cluster mode, not swithed before,try to switched a slave node to master because the appenonly files were cleared
-                echo "The appendonly files were cleared. try to choose a slave node as new master node for cluster(${cluster_name})"
+                log "${serverdir}" "Redis Server(${PORT}) : The appendonly files were cleared. try to choose a slave node as new master node for cluster(${cluster_name})"
                 switch_one_slave_to_master
             fi
             start_redis
         fi
     else
-        echo "The ${counter}th redis server on port ${PORT} has already been started"
+        log "${serverdir}" "Redis Server(${PORT}) : The redis server on port has already been started"
     fi
     ((counter++))
     ((PORT++))
@@ -558,13 +574,21 @@ function wait_until_rediscluster_in_initial_status(){
            is_master=$(echo -e "$res" | grep "myself" | grep "master" | wc -l )
            if [[ ${is_master} -ne ${should_be_master} ]];then
                #the current server is not in the initial status,wait
-               if [[ ${is_master} -eq 1 ]];then
-                   echo "The server(${redis_host}:${redis_port}) is master, but it is configured as slave.can't backup the nodes.conf right now."
-               else
-                   echo "The server(${redis_host}:${redis_port}) is slave, but it is configured as master.can't backup the nodes.conf right now."
-               fi
-               succeed=0
-               break
+               if [[ ${cluster_reset_masternodes} -eq 1 ]]; then
+                   if [[ ${is_master} -eq 1 ]];then
+                       echo "The server(${redis_host}:${redis_port}) is master, but it is configured as slave.can't backup the nodes.conf right now."
+                   else
+                       echo "The server(${redis_host}:${redis_port}) is slave, but it is configured as master.can't backup the nodes.conf right now."
+                   fi
+                   succeed=0
+                   break
+                else
+                   if [[ ${is_master} -eq 1 ]];then
+                       echo "The server(${redis_host}:${redis_port}) is master, and it is configured as slave, but reset masternodes feature is disabled. backup the nodes.conf right now."
+                   else
+                       echo "The server(${redis_host}:${redis_port}) is slave, and it is configured as master. but reset masternodes feature is disabled.  backup the nodes.conf right now."
+                   fi
+                fi
            else
                if [[ ${is_master} -eq 1 ]];then
                    echo "The server(${redis_host}:${redis_port}) is master, and it is also configured as master."
@@ -608,7 +632,7 @@ function check_related_clusters(){
         {{- end }}
         if [[ "${host}" == "${HOSTNAME}" ]]
         then
-            echo "The redis server(${HOSTNAME}:${port}) is the member of the redis cluster(${cluster_name}). Check whether it was created or not."
+            log "${serverdir}" "Redis Server(${port}) : The redis server is the member of the redis cluster(${cluster_name}). Check whether it was created or not."
             while [[ true ]]
             do
                 if [[ "${PASSWORDS["$port"]}" == "" ]]
@@ -620,52 +644,51 @@ function check_related_clusters(){
                 status=$?
                 if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]]
                 then
-                    echo "The redis server(127.0.0.1:${port}) is not running,status=${status}"
+                    log "${serverdir}" "Redis Server(${port}) : The redis server is not running,status=${status}"
                     return 128
                 fi
                 if [[ $res ==  *ERR* ]]
                 then
-                    echo "The redis server(127.0.0.1:${port}) does not support cluster feature"
+                    log "${serverdir}" "Redis Server(${port}) : The redis server does not support cluster feature"
                     return 128
                 fi
                 res=$(echo "$res" | grep "cluster_state")
                 if [[ $res = *cluster_state:ok* ]]
                 then
-                    echo "The redis cluster(${cluster_name}) has alreay been created."
+                    log "${serverdir}" "Redis Server(${port}) : The redis cluster(${cluster_name}) has alreay been created."
                     return 0
                 fi
 
                 nodes_file="${serverdir}/data/nodes.conf"
                 if ! [[ -f "${nodes_file}" ]]
                 then
-                    echo "Can't find the nodes.conf.the redis server(127.0.0.1:${port}) does not support cluster feature"
+                    log "${serverdir}" "Redis Server(${port}) : Can't find the nodes.conf.the redis server(127.0.0.1:${port}) does not support cluster feature"
                     return 128
                 fi
                 lines=$(cat ${nodes_file} | grep -E "(slave)|(master)" | wc -l)
                 if [[ ${lines} -gt 1 ]]
                 then
-                    echo "The nodes file(${nodes_file}) contains ${lines} nodes, the redis cluster should be created.wait 1 second and check again."
+                    log "${serverdir}" "Redis Server(${port}) : The nodes file(${nodes_file}) contains ${lines} nodes, the redis cluster should be created.wait 1 second and check again."
                     sleep 1
                     continue
                 fi
                 
                 if [[ $index -eq 0 ]]
                 then
-                    echo "The redis cluster(${cluster_name}) is not created. create it now.status=${res}"
+                    log "${serverdir}" "Redis Server(${port}) : The redis cluster(${cluster_name}) is not created. create it now.status=${res}"
                     return 1
                 else
-                    echo "The redis cluster(${cluster_name}) is not created. wait the node(${cluster_nodes[0]}) to create it"
-
+                    log "${serverdir}" "Redis Server(${port}) : The redis cluster(${cluster_name}) is not created. wait the node(${cluster_nodes[0]}) to create it..."
                     #wait until the redis cluster is in the initial status
                     wait_until_rediscluster_in_initial_status
 
-                    echo "redis cluster was create , backup the nodes file" 
+                    log "${serverdir}" "Redis Server(${port}) : The redis cluster(${cluster_name}) was create , backup the nodes file" 
                     #this is the first chance to backup the nodes file for the non first node
                     cp -f ${serverdir}/data/nodes.conf ${serverdir}/data/nodes.conf.bak
                     if [[ $? -eq 0 ]];then
-                        echo "Succeed to backup the nodes.conf to ${serverdir}/data/nodes.conf.bak"
+                        log "${serverdir}" "Redis Server(${port}) : Succeed to backup the nodes.conf to ${serverdir}/data/nodes.conf.bak"
                     else
-                        echo "Failed to backup the nodes.conf"
+                        log "${serverdir}" "Redis Server(${port}) : Failed to backup the nodes.conf"
                         rm -f ${serverdir}/data/nodes.conf.bak
                     fi
                     return 2
@@ -738,6 +761,7 @@ cluster_size={{ print "${" $redis_cluster.name "_size}" }}
 cluster_slaves={{ print "${" $redis_cluster.name "_slaves}" }}
 cluster_groups={{ print "${" $redis_cluster.name "_groups}" }}
 cluster_persistent={{ print "${" $redis_cluster.name "_persistent}" }}
+cluster_reset_masternodes={{ print "${" $redis_cluster.name "_reset_masternodes}" }}
 master_nodes_str={{ print "${" $redis_cluster.name "_nodes_str}" }}
 
 check_related_clusters
@@ -750,6 +774,11 @@ fi
 if [[ $status -eq 1 ]]
 then
     #redis cluster was not created,create it now
+    {{- if eq $servers 1 }}
+    serverdir="${REDIS_DIR}"
+    {{- else }}
+    serverdir="${REDIS_DIR}/${cluster_nodes[2]}"
+    {{- end }}
     precheck
     staus=$?
     if [[ $status -gt 127 ]]
@@ -759,7 +788,7 @@ then
     fi
     if [[ $status -eq 0 ]]
     then
-        echo "Try to create the cluster for the redis server(${cluster_nodes[1]}:${cluster_nodes[2]} without replicas)"
+        log "${serverdir}" "Redis cluster(${cluster_name}) : Begin to create the redis cluster without replicas"
         if [[ "${PASSWORDS["${cluster_nodes[2]}"]}" == "" ]]
         then
             redis-cli --cluster create ${master_nodes_str} --cluster-yes 
@@ -769,12 +798,12 @@ then
         status=$?
         if [[ $status -ne 0 ]]
         then
-            echo "Failed to create the redis cluster(${cluster_name})"
+            log "${serverdir}" "Redis cluster(${cluster_name}) : Failed to create the redis cluster"
             exit 1
         fi
-        echo "Succeed to create the redis cluster(${cluster_name}) without replicas"
+        log "${serverdir}" "Redis cluster(${cluster_name}) : Succeed to create the redis cluster without replicas"
 
-        echo "Start to add the replicas to redis cluster(${cluster_name})"
+        log "${serverdir}" "Redis cluster(${cluster_name}) : Start to add the replicas to redis cluster"
         index=0
         while [[ ${index} -lt ${cluster_groups} ]]
         do
@@ -791,11 +820,11 @@ then
             status=$?
             if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ $res = *ERR* ]]
             then 
-                echo "Failed to retrieve the cluster id from master server(${master_server}:${master_port}) )"
+                log "${serverdir}" "Redis cluster(${cluster_name}) : Failed to retrieve the cluster id from master server(${master_server}:${master_port}) )"
                 exit 1
             fi
             master_id=${res}
-            echo "Succeed to retrieve the cluster id(${master_id}) from master server(${master_server}:${master_port}) )"
+            log "${serverdir}" "Redis cluster(${cluster_name}) : Succeed to retrieve the cluster id(${master_id}) from master server(${master_server}:${master_port}) )"
 
             #add the slaves one by one
             j=1
@@ -805,7 +834,7 @@ then
                 slave_server=${cluster_nodes[$(( $slave_index * 3 + 1 ))]}
                 slave_port=${cluster_nodes[$(( $slave_index * 3 + 2 ))]}
 
-                echo "Start to let slave server(${slave_server}:${slave_port}) meet with master server(${master_server}:${master_port})"
+                log "${serverdir}" "Redis cluster(${cluster_name}) : Start to let slave server(${slave_server}:${slave_port}) meet with master server(${master_server}:${master_port})"
                 while [[ true ]]
                 do
                     if [[ "${PASSWORDS["${slave_port}"]}" == "" ]]
@@ -817,7 +846,7 @@ then
                     status=$?
                     if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ $res = *ERR* ]]
                     then 
-                        echo "Failed to let slave server(${slave_server}:${slave_port}) meet with master server(${master_server}:${master_port}).res=${res}"
+                        log "${serverdir}" "Redis cluster(${cluster_name}) : Failed to let slave server(${slave_server}:${slave_port}) meet with master server(${master_server}:${master_port}).res=${res}"
                         sleep 1
                         continue
                     else
@@ -836,7 +865,7 @@ then
                     status=$?
                     if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ $res = *ERR* ]]
                     then 
-                        echo "Failed to retrive the cluster nodes from server(${slave_server}:${slave_port}) )"
+                        log "${serverdir}" "Redis cluster(${cluster_name}) : Failed to retrive the cluster nodes from server(${slave_server}:${slave_port}) )"
                         exit 1
                     fi
                     lines=$(echo -e "${res}" | wc -l)
@@ -849,7 +878,7 @@ then
                     fi
                 done
 
-                echo "Start to add the slave server(${slave_server}:${slave_port}) to the master server(${master_server}:${master_port})"
+                log "${serverdir}" "Redis cluster(${cluster_name}) : Start to add the slave server(${slave_server}:${slave_port}) to the master server(${master_server}:${master_port})"
                 while [[ true ]]
                 do
                     if [[ "${PASSWORDS["${slave_port}"]}" == "" ]]
@@ -861,7 +890,7 @@ then
                     status=$?
                     if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ $res = *ERR* ]]
                     then 
-                        echo "Failed to add the slave server(${slave_server}:${slave_port}) to the master server(${master_server}:${master_port}), res=${res}"
+                        log "${serverdir}" "Redis cluster(${cluster_name}) : Failed to add the slave server(${slave_server}:${slave_port}) to the master server(${master_server}:${master_port}), res=${res}"
                         sleep 1
                         continue
                     else
@@ -869,7 +898,7 @@ then
                     fi
                 done
                 
-                echo "Check whether the slave server(${slave_server}:${slave_port}) ) was added as slave server of the master server(${master_server}:${master_port})"
+                log "${serverdir}" "Redis cluster(${cluster_name}) : Check whether the slave server(${slave_server}:${slave_port}) ) was added as slave server of the master server(${master_server}:${master_port})"
                 while [[ true ]]
                 do
                     if [[ "${PASSWORDS["${slave_port}"]}" == "" ]]
@@ -881,7 +910,7 @@ then
                     status=$?
                     if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ $res = *ERR* ]]
                     then 
-                        echo "Failed to retrieve the cluster nodes from the slave server(${slave_server}:${slave_port}) ).res=${res}"
+                        log "${serverdir}" "Redis cluster(${cluster_name}) : Failed to retrieve the cluster nodes from the slave server(${slave_server}:${slave_port}) ).res=${res}"
                         exit 1
                     fi
                     lines=$(echo -e "$res" | grep "myself" | grep "slave" | wc -l)
@@ -893,13 +922,13 @@ then
                         break
                     fi
                 done
-                echo "Succeed to add the slave server(${slave_server}:${slave_port}) to the master server(${master_server}:${master_port})"
+                log "${serverdir}" "Redis cluster(${cluster_name}) : Succeed to add the slave server(${slave_server}:${slave_port}) to the master server(${master_server}:${master_port})"
                 ((j++))
             done
             ((index++))
         done
 
-        echo "Double check whether the cluster(${cluster_name}) has been created"
+        log "${serverdir}" "Redis cluster(${cluster_name}) : Double check whether the cluster has been created"
         while [[ true ]]
         do
             if [[ "${PASSWORDS["${cluster_nodes[2]}"]}" == "" ]]
@@ -911,19 +940,19 @@ then
             status=$?
             if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ $res = *ERR* ]]
             then
-                echo "The redis server(${cluster_nodes[1]}:${cluster_nodes[2]}) is not ready.res=${res}"
+                log "${serverdir}" "Redis cluster(${cluster_name}) : The redis server(${cluster_nodes[1]}:${cluster_nodes[2]}) is not ready.res=${res}"
                 exit 1
             fi
             res=$(echo "$res" | grep "cluster_state")
             if [[ $res = *cluster_state:ok* ]]
             then
-                echo "The redis cluster(${cluster_name}) is ready"
+                log "${serverdir}" "Redis cluster(${cluster_name}) : The redis cluster is ready"
                 break
             fi
             sleep 1
         done
 
-        echo "Save the configuration files"
+        log "${serverdir}" "Redis cluster(${cluster_name}) : Save the configuration files"
         index=0
         while [[ ${index} -lt ${cluster_size} ]]
         do
@@ -938,10 +967,10 @@ then
             status=$?
             if [[ $status -ne 0 ]] || [[ $res = *"Connection refused"* ]] || [[ $res = *ERR* ]]
             then
-                echo "Failed to save the configuation of the server(${server}:${port}).res=${res}"
+                log "${serverdir}" "Redis cluster(${cluster_name}) : Failed to save the configuation of the server(${server}:${port}).res=${res}"
                 exit 1
             else
-                echo "Succeed to save the configuation of the server(${server}:${port})"
+                log "${serverdir}" "Redis cluster(${cluster_name}) : Succeed to save the configuation of the server(${server}:${port})"
             fi
             ((index++))
         done
@@ -956,9 +985,9 @@ then
         {{- end }}
         cp -f ${serverdir}/data/nodes.conf ${serverdir}/data/nodes.conf.bak
         if [[ $? -eq 0 ]];then
-            echo "Succeed to backup the nodes.conf to ${serverdir}/data/nodes.conf.bak"
+            log "${serverdir}" "Redis server(${cluster_nodes[2]}) : Succeed to backup the nodes.conf to ${serverdir}/data/nodes.conf.bak"
         else
-            echo "Failed to backup the nodes.conf"
+            log "${serverdir}" "Redis server(${cluster_nodes[2]}) : Failed to backup the nodes.conf"
             rm -f ${serverdir}/data/nodes.conf.bak
         fi
     fi
@@ -990,26 +1019,26 @@ function backup_nodes_conf_if_required(){
                now=$(date +"%s")
                waittime=$((600 + starttime - now))
                if [[ ${waittime} -gt 0 ]];then
-                   echo "Wait ${waittime} seconds to let all redis pod instances start before trying to backup nodes.conf"
+                   log "${serverdir}" "Redis server(${port}) : Wait ${waittime} seconds to let all redis pod instances start before trying to backup nodes.conf"
                    sleep $waittime
                fi
-               echo "Start to check whether the redis cluster is in initial status before trying to backup nodes.conf"
-
+               log "${serverdir}" "Redis server(${port}) : Checking whether the redis cluster is in initial status before trying to backup nodes.conf..."
                #wait until the redis cluster is in the initial status
                wait_until_rediscluster_in_initial_status
 
-               echo "All redis servers are in initial status, backup the nodes.conf"
+               log "${serverdir}" "Redis server(${port}) : All redis servers are in initial status, backup the nodes.conf"
                cp ${serverdir}/data/nodes.conf ${serverdir}/data/nodes.conf.bak
                if [[ $? -eq 0 ]];then
-                   echo "Succeed to backup the nodes.conf to ${serverdir}/data/nodes.conf.bak"
+                   log "${serverdir}" "Redis server(${port}) : Succeed to backup the nodes.conf to ${serverdir}/data/nodes.conf.bak"
                else
-                   echo "Failed to backup the nodes.conf"
+                   log "${serverdir}" "Redis server(${port}) : Failed to backup the nodes.conf"
                    rm -f ${serverdir}/data/nodes.conf.bak
                fi
             fi
         fi
         ((index++))
     done
+    log "${serverdir}" "Redis server(${port}) : End to start/initialize the redis server"
     return 0
 }
 
@@ -1023,6 +1052,7 @@ cluster_size={{ print "${" $redis_cluster.name "_size}" }}
 cluster_slaves={{ print "${" $redis_cluster.name "_slaves}" }}
 cluster_groups={{ print "${" $redis_cluster.name "_groups}" }}
 cluster_persistent={{ print "${" $redis_cluster.name "_persistent}" }}
+cluster_reset_masternodes={{ print "${" $redis_cluster.name "_reset_masternodes}" }}
 backup_nodes_conf_if_required
 
 {{- end }} 
