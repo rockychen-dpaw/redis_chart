@@ -348,6 +348,10 @@ spec:
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       schedulerName: default-scheduler
+      {{- if $.Values.redis.tolerations }}
+      tolerations:
+{{ $.Values.redis.tolerations | toYaml | indent 8 }}
+      {{- end }}
       securityContext:
         fsGroup: 999
       terminationGracePeriodSeconds: 30

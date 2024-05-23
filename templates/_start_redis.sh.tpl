@@ -54,8 +54,6 @@ recreate_cluster=$?
 
 starttime=$(date +"%s")
 
-echo "Begin to start redis servers."
-
 PORT={{ $.Values.redis.port | default 6379 | int }}
 
 
@@ -167,8 +165,9 @@ CLEAR_IF_FIX_FAILED[{{ $port | quote }}]=0
 day=$(date +"%Y%m%d")
 firstlogfile="redis_${day}-000000.log"
 
-{{- $servers := $.Values.redis.servers | default 1 | int }}
 {{- $replicas := $.Values.redis.replicas | default 1 | int }}
+
+echo "Begin to start redis servers."
 
 function start_redis(){
     #start the redis server, if failed,  return 128
@@ -382,7 +381,7 @@ do
 
         if [[ ${clusternode_index} -ge 0 ]]
         then
-            log "${serverdir}" "Redis Server(${PORT}) : The redis server has joined the redis cluster({${cluster_name}})"
+            log "${serverdir}" "Redis Server(${PORT}) : The redis server is belonging to the redis cluster({${cluster_name}})"
             if [[ ${cluster_persistent} -eq 0 ]]
             then
                 log "${serverdir}" "Redis Server(${PORT}) : The redis cluster($cluster_name) doesn't support persistent, try to choose a slave node as new master node"
@@ -400,6 +399,17 @@ do
                 log "${serverdir}" "Redis Server(${PORT}) : The redis cluster($cluster_name) supports persistent, no need to switch the slave node to master node at this stage"
                 switched=0
             fi
+        else
+            log "${serverdir}" "Redis Server(${PORT}) : The redis server is not belonging to any redis cluster"
+            if [[ -e "${serverdir}/data/nodes.conf" ]];then
+                log "${serverdir}" "Redis Server(${PORT}) : Found the file(${serverdir}/data/nodes.conf), remove it"
+                rm -rf "${serverdir}/data/nodes.conf"
+            fi
+            if [[ -e "${serverdir}/data/nodes.conf.bak" ]];then
+                log "${serverdir}" "Redis Server(${PORT}) : Found the file(${serverdir}/data/nodes.conf.bak), remove it"
+                rm -rf "${serverdir}/data/nodes.conf.bak"
+            fi
+
         fi
 
         #create a daily based redis log file and use soft link to link the log file to redislog file
