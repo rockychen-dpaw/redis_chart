@@ -221,14 +221,6 @@ spec:
           resources:
 {{ $.Values.redis.resources | toYaml | indent 12 }}
           {{- end }}
-          securityContext:
-            runAsNonRoot: false
-            allowPrivilegeEscalation: false
-            privileged: false
-            readOnlyRootFilesystem: false
-            runAsNonRoot: true
-            capabilities: {}
-            runAsUser: 999
           terminationMessagePath: /dev/termination-log
           terminationMessagePolicy: File
           tty: true
