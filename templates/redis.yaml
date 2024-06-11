@@ -319,7 +319,6 @@ spec:
                   {{- end }}
               {{- end }}
           {{- end }}
-          {{- if not ($.Values.redis.reset | default false) }}
           startupProbe:
             failureThreshold: {{ $startupProbe.failureThreshold | default 30 }}
             successThreshold: {{ $startupProbe.successThreshold | default 1 }}
@@ -338,10 +337,13 @@ spec:
             exec:
               command:
                 - /usr/local/redis/bin/redis_liveness
-          {{- end }}
       dnsPolicy: ClusterFirst
       restartPolicy: Always
       schedulerName: default-scheduler
+      {{- if $.Values.redis.tolerations }}
+      tolerations:
+{{ $.Values.redis.tolerations | toYaml | indent 8 }}
+      {{- end }}
       securityContext:
         fsGroup: 999
       terminationGracePeriodSeconds: 30

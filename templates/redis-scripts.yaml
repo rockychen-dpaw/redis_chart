@@ -7,12 +7,12 @@ metadata:
     field.cattle.io/description: the scripts to manage redis
 binaryData:
   start_redis: >- 
-{{- if $.Values.redis.reset | default false }}
-{{ include "redis.clear_redis" . | b64enc | indent 4 }}
-{{- else }}
 {{ include "redis.start_redis" . | b64enc | indent 4 }}
-{{- end }}
+  reset_redis: >- 
+{{ include "redis.reset_redis" . | b64enc | indent 4 }}
   redis_startup: >- 
 {{ include "redis.redis_startup" . | b64enc | indent 4 }}
   redis_liveness: >- 
 {{ include "redis.redis_liveness" . | b64enc | indent 4 }}
+  functions: >- 
+{{ include "redis.functions" . | b64enc | indent 4 }}
