@@ -14,7 +14,7 @@
 #the configured redis conf for specified port
 {{- $redisport_conf := "" }}
 #the configured redis conf for specified workload and port
-{{- $redisserver_conf := "" }}
+{{- $redisworkload_conf := "" }}
 {{- $save := "\"\"" }}
 {{- $appendonly := "no" }}
 {{- $cluster_enabled :=  false }}
@@ -56,11 +56,11 @@ data:
               {{- end }}
           {{- end }}
           #get configured redis server conf 
-          {{- $redisserver_conf = (get $.Values.redis (print $workload_conf_name "_" $port ".conf")) | default dict }}
+          {{- $redisworkload_conf = (get $.Values.redis (print $workload_conf_name "_" $port ".conf")) | default dict }}
           #get the configured value from server conf, port conf and common conf; otherwise use default value
-          {{- $save = (get $redisserver_conf "save") | default (get $redisport_conf "save") | default (get $redis_conf "save") | default "\"\"" }}
-          {{- $appendonly = (get $redisserver_conf "appendonly") | default (get $redisport_conf "appendonly") | default (get $redis_conf "appendonly") | default "no" }}
-          {{- $cluster_enabled = and $has_storage (eq ((get $redisserver_conf "cluster-enabled") | default (get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes") }}
+          {{- $save = (get $redisworkload_conf "save") | default (get $redisport_conf "save") | default (get $redis_conf "save") | default "\"\"" }}
+          {{- $appendonly = (get $redisworkload_conf "appendonly") | default (get $redisport_conf "appendonly") | default (get $redis_conf "appendonly") | default "no" }}
+          {{- $cluster_enabled = and $has_storage (eq ((get $redisworkload_conf "cluster-enabled") | default (get $redisport_conf "cluster-enabled") | default (get $redis_conf "cluster-enabled") | default "no") "yes") }}
           {{- if not $save }}
               {{- $save = "\"\"" }}
           {{- end }}
@@ -110,8 +110,8 @@ data:
                   {{- end }}
               {{- end }}
           {{- end }}
-          {{- if $redisserver_conf }}
-              {{- range $key,$value := $redisserver_conf }}
+          {{- if $redisworkload_conf }}
+              {{- range $key,$value := $redisworkload_conf }}
                   {{- if and (ne $key "save") (ne $key "appendonly") (ne $key "cluster-enabled") (not (hasPrefix "_" $key))}}
     {{ $key }} {{ $value }}
                   {{- end }}

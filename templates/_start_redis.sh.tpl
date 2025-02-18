@@ -144,6 +144,7 @@ declare -a {{ $redis_cluster.name}}_nodes
 
 declare -A PASSWORDS
 declare -A CLEAR_IF_FIX_FAILED
+declare -A CLEAR_TEMP_REWRITEAOF
 {{- $replicas := $.Values.redis.replicas | default 1 | int }}
 {{- $workload_index := 0 }}
 {{- $replica_index := 0 }}
@@ -159,6 +160,11 @@ PASSWORDS[{{ $port | quote }}]={{ (get $redisport_conf "requirepass") | default 
 CLEAR_IF_FIX_FAILED[{{ $port | quote }}]=1
 {{- else }}
 CLEAR_IF_FIX_FAILED[{{ $port | quote }}]=0
+{{- end }}
+{{ if (get $redisport_conf "_clear_temp_rewriteaof") | default (get $redis_conf "_clear_temp_rewriteaof") | default false }}
+CLEAR_TEMP_REWRITEAOF[{{ $port | quote }}]=1
+{{- else }}
+CLEAR_TEMP_REWRITEAOF[{{ $port | quote }}]=0
 {{- end }}
 {{- end }}
 
@@ -198,6 +204,25 @@ function start_redis(){
         then
             #redis is online and ready to use
             log "${serverdir}" "Redis Server(${PORT}) : The redis server is ready to use"
+
+            if [[ ${CLEAR_TEMP_REWRITEAOF["$PORT"]} -eq 1 ]]; then
+                log "${serverdir}" "Redis Server(${PORT}) : Try to clean temporary rewriteaof files"
+                rm -rf ${serverdir}/data/temp-rewriteaof*.aof
+                if [[ $? -eq 0 ]]; then
+                    log "${serverdir}" "Redis Server(${PORT}) : Succeed to clean temporay rewriteaof files"
+                else
+                    log "${serverdir}" "Redis Server(${PORT}) : Failed to clean temporary rewriteaof file"
+                fi
+            fi
+
+            log "${serverdir}" "Redis Server(${PORT}) : Try to clean log files older than 14 days"
+            find  ${serverdir}/logs -mtime +14 -name "redis*.log" -exec rm -f {} \;
+            if [[ $? -eq 0 ]]; then
+                log "${serverdir}" "Redis Server(${PORT}) : Succeed to clean log files older than 14 days"
+            else
+                log "${serverdir}" "Redis Server(${PORT}) : Failed to clean log files older than 14 days"
+            fi
+
             return 0
         fi
         if [[ ${attempts} -eq -1 ]]
