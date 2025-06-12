@@ -110,8 +110,8 @@ Deploy single redis server or multiple redis servers to kubernetes
         requirepass: "12345"
         masterauth: "12345"
         cluster-node-timeout: 15000
-        _clear_data_if_fix_failed: true #Clear the persistent files if the persistent files are corrupted,and can't be fixed.
-
+        _clear_temp_rewriteaof: true  # If true, clear temporay rewriteaof files before starting redis server
+        _clear_data_if_fix_failed: true # Clear the persistent files if the persistent files are corrupted,and can't be fixed.
       # Configure redis clusters if redis cluster is required
       redisClusters:
       - name: "default" # the name of the redis cluster
