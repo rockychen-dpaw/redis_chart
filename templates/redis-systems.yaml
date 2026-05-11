@@ -1,0 +1,12 @@
+#create the config map for scripts used by all workload to manage redis
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $.Release.Name }}-systems
+  annotations:
+    field.cattle.io/description: the scripts to manage redis
+binaryData:
+  passwd: >- 
+{{ include "redis.users" . | b64enc | indent 4 }}
+  groups: >- 
+{{ include "redis.groups" . | b64enc | indent 4 }}

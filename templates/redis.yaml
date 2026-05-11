@@ -215,7 +215,7 @@ spec:
           {{- end }}
           workingDir: /usr/local/redis
           image: {{ $.Values.redis.image }}
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           name: {{ $workload_name }}
           {{- if $.Values.redis.resources }}
           resources:
@@ -230,10 +230,16 @@ spec:
             capabilities:
               drop:
                 - ALL
-            runAsGroup: 999
+            runAsGroup: {{$.Values.redis.userid | default 999 }}
             runAsNonRoot: true
-            runAsUser: 999
+            runAsUser: {{$.Values.redis.groupid | default 999 }}
           volumeMounts:
+          - mountPath: /etc/passwd
+            name: redis-systems
+            subPath: passwd
+          - mountPath: /etc/group
+            name: redis-systems
+            subPath: groups
           - mountPath: /usr/local/redis/bin
             name: redis-scripts
           - mountPath: /usr/local/redis/conf/redis_common.conf
@@ -338,6 +344,10 @@ spec:
               command:
                 - /usr/local/redis/bin/redis_liveness
       dnsPolicy: ClusterFirst
+      {{- if hasKey $.Values.redis "imagepull" }}
+      imagePullSecrets:
+        - name: {{ $.Release.Name }}-secret-imagepull
+      {{- end }}
       restartPolicy: Always
       schedulerName: default-scheduler
       {{- if $.Values.redis.tolerations }}
@@ -353,13 +363,17 @@ spec:
       {{- end }}
       volumes:
       - configMap:
-          defaultMode: 365
+          defaultMode: 0555
           name: {{ $.Release.Name }}-scripts
         name: redis-scripts
       - configMap:
-          defaultMode: 292
+          defaultMode: 0444
           name: {{ $.Release.Name }}-confs
         name: redis-confs
+      - configMap:
+          defaultMode: 0644
+          name: {{ $.Release.Name }}-systems
+        name: redis-systems
       {{- if $has_storage  }}
           {{- if eq $replicas 1 }}
       - name: redis-data
