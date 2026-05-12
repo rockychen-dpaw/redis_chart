@@ -201,8 +201,27 @@ spec:
               {{- end }}
           {{- end }}
       {{- end }}
+      {{- if $.Values.redis.useridchanged | default false  }}
+      initContainers:
+        - name: init-{{ $workload_name }}
+          command:
+            - /bin/chown
+            - '-R'
+            - '{{$.Values.redis.userid | default 999 }}:{{$.Values.redis.groupid | default 999 }}'
+            - /redis-data
+          image: dhi.io/busybox:1-alpine3.23-dev
+          imagePullPolicy: IfNotPresent
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          {{- if $has_storage  }}
+          volumeMounts:
+          - mountPath: /redis-data
+            name: {{ $workload_name }}-data
+          {{- end }}
+      {{- end }}
       containers:
-        - args:
+        - name: {{ $workload_name }}
+          args:
           - /usr/local/redis/bin/start_redis
           {{- if $.Values.redis.envs }}
           env:
@@ -216,7 +235,6 @@ spec:
           workingDir: /usr/local/redis
           image: {{ $.Values.redis.image }}
           imagePullPolicy: IfNotPresent
-          name: {{ $workload_name }}
           {{- if $.Values.redis.resources }}
           resources:
 {{ $.Values.redis.resources | toYaml | indent 12 }}
@@ -234,12 +252,6 @@ spec:
             runAsNonRoot: true
             runAsUser: {{$.Values.redis.groupid | default 999 }}
           volumeMounts:
-          - mountPath: /etc/passwd
-            name: redis-systems
-            subPath: passwd
-          - mountPath: /etc/group
-            name: redis-systems
-            subPath: groups
           - mountPath: /usr/local/redis/bin
             name: redis-scripts
           - mountPath: /usr/local/redis/conf/redis_common.conf
@@ -355,7 +367,7 @@ spec:
 {{ $.Values.redis.tolerations | toYaml | indent 8 }}
       {{- end }}
       securityContext:
-        fsGroup: 999
+        fsGroup: {{$.Values.redis.groupid | default 999 }}
       terminationGracePeriodSeconds: 30
       {{- if $workload.affinity }}
       affinity:
