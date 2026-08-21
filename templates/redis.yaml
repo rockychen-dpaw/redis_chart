@@ -245,6 +245,9 @@ spec:
           stdin: true
           securityContext:
             allowPrivilegeEscalation: false
+            privileged: false
+            seccompProfile:
+              type: RuntimeDefault
             capabilities:
               drop:
                 - ALL
